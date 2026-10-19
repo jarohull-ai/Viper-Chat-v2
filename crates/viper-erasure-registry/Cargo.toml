@@ -5,8 +5,18 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = []
+aws-s3 = ["dep:aws-config", "dep:aws-sdk-s3"]
+etcd = ["dep:etcd-client"]
+
 [dependencies]
+aws-config = { workspace = true, optional = true }
+aws-sdk-s3 = { workspace = true, optional = true }
 ed25519-dalek.workspace = true
+etcd-client = { workspace = true, optional = true }
+serde.workspace = true
+serde_jcs.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

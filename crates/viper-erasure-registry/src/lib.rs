@@ -276,7 +276,7 @@ pub trait TombstoneArchive: Send + Sync {
     ) -> RegistryFuture<'_, Result<ReplayPage, BackendError>>;
 }
 
-/// Deterministic signing adapter. Re-signing the same payload must yield identical bytes.
+/// Signing capability. Re-signing the same payload must yield identical bytes.
 pub trait TombstoneSigner: Send + Sync {
     /// Canonicalizes, domain-separates, signs and hashes one event payload.
     ///
@@ -284,7 +284,10 @@ pub trait TombstoneSigner: Send + Sync {
     ///
     /// Returns an opaque backend error if signing or canonicalization fails.
     fn sign(&self, payload: &TombstonePayload) -> Result<SignedTombstone, BackendError>;
+}
 
+/// Public-key-only verification capability; implementations never need signing keys.
+pub trait TombstoneVerifier: Send + Sync {
     /// Verifies canonical form, signing-key trust, signature and event envelope.
     ///
     /// # Errors
@@ -354,7 +357,7 @@ impl<S, A, G> ErasureRegistry<S, A, G>
 where
     S: RegistryStore,
     A: TombstoneArchive,
-    G: TombstoneSigner,
+    G: TombstoneSigner + TombstoneVerifier,
 {
     /// Creates a coordinator. Production readiness remains false until backends reconcile.
     pub fn new(registry_id: impl Into<String>, store: S, archive: A, signer: G) -> Self {
@@ -1086,7 +1089,9 @@ mod tests {
                 object_bytes,
             })
         }
+    }
 
+    impl TombstoneVerifier for RealEd25519Signer {
         fn verify(&self, event: &ArchivedTombstone) -> Result<(), BackendError> {
             if event.signed.canonical_payload != Self::payload_bytes(&event.payload)
                 || event.signed.digest
@@ -1136,7 +1141,9 @@ mod tests {
                 object_bytes,
             })
         }
+    }
 
+    impl TombstoneVerifier for MockSigner {
         fn verify(&self, event: &ArchivedTombstone) -> Result<(), BackendError> {
             let expected = self.sign(&event.payload)?;
             if expected == event.signed {
