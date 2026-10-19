@@ -3,9 +3,10 @@
 Private, incremental rewrite of Viper Chat around a fail-closed decision engine,
 versioned Tool Guard policy, and durable SQLite trajectory ledger.
 
-This repository starts with Phase 1 only. The Rust workspace is deliberately
-incapable of executing tools. See [`docs/v2/`](docs/v2/) for the frozen product
-specification, architecture, migration plan, ADRs, and protocol contracts.
+Phase 1 is complete; Phase 2 starts with the `viper-server` HTTP API. The Rust
+workspace is still deliberately incapable of executing tools. See
+[`docs/v2/`](docs/v2/) for the frozen product specification, architecture,
+migration plan, ADRs, and protocol contracts.
 
 ## Build and verify
 
@@ -20,7 +21,13 @@ published library-only crate set.
 
 ## License
 
-Noncommercial use is available under the [PolyForm Noncommercial License
-1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0). Commercial
-use requires a separate paid commercial license; see [`LICENSE`](LICENSE).
-This is source-available software, not an OSI-approved open-source release.
+Personal and other noncommercial use is available under the [PolyForm
+Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0).
+Use for commercial advantage or monetary compensation requires a separate paid
+commercial license; see [`LICENSE`](LICENSE). PolyForm Noncommercial also
+allows certain noncommercial institutional uses (including qualifying
+educational, charitable, and public-research uses) regardless of funding, so
+the rule is based on the purpose of use—not solely on whether the user is a
+company. This is source-available software, not an OSI-approved open-source
+release. The license terms should be reviewed by qualified counsel before
+commercial distribution.

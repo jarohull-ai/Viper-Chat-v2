@@ -40,13 +40,15 @@ Acceptance evidence:
 
 Exit: all acceptance evidence above passes, and Phase 1 code is committed.
 
-## Phase 2 — sandboxed terminal slice
+## Phase 2 — API and sandboxed terminal slice
 
+- Start with the `viper-server` API slice: strict decision submission, durable COMMIT receipts,
+  read-only decision/trajectory inspection and chain verification. Keep it loopback-only and expose
+  no execution endpoint; publish the wire contract in `protocols/VIPER_SERVER_V1.md`.
 - Add the production SEED provider process and first-run credential provisioner. Load the same
   versioned key record via a private OS credential descriptor; never fall back to `.env`.
-- Add `viper-server` for decision submission and read-only decision/trajectory inspection. It must
-  reject unknown request fields, enforce the 64 KiB body limit, use stable machine-readable errors,
-  and expose no tool-execution capability in this phase.
+- The server API must reject unknown request fields, enforce the 64 KiB body limit, use stable
+  machine-readable errors, and expose no tool-execution capability in this phase.
 - Add `viper-sandbox`, Bubblewrap environment construction, process groups, timeouts, output limits,
   cancellation, and PTY lifecycle.
 - Keep networking physically absent from `terminal_run`.

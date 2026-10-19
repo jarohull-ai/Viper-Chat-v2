@@ -74,7 +74,7 @@ pub struct GuardVerdict {
     pub policy_digest: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum RuleMatcher {
     Regex(Regex),
     NetworkClientMissingTimeout,
@@ -101,7 +101,7 @@ impl RuleMatcher {
 }
 
 /// One compiled first-hit-wins rule.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Rule {
     id: String,
     matcher: RuleMatcher,
@@ -184,7 +184,7 @@ impl Rule {
 }
 
 /// Ordered deterministic command policy.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ToolGuard {
     level: GuardLevel,
     rules: Vec<Rule>,

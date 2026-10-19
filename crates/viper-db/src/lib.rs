@@ -2,6 +2,7 @@
 
 use serde_json::from_str;
 use sqlx::migrate::Migrator;
+use sqlx::sqlite::SqliteRow;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Connection, Row, SqliteConnection, SqlitePool};
 use std::collections::BTreeMap;
@@ -243,6 +244,78 @@ impl TrajectoryDb {
         u64::try_from(count).map_err(DbError::integrity)
     }
 
+    /// Looks up one persisted event by its globally unique identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns a sanitized `SQLite` failure or an invalid stored-event error.
+    pub async fn event_by_id(&self, event_id: &str) -> Result<Option<HashedEvent>, DbError> {
+        let row = sqlx::query(
+            "SELECT sequence, event_id, trace_id, schema_version, event_type, occurred_at,
+                    detail_json, previous_hash, event_hash
+             FROM trajectory_events WHERE event_id = ?",
+        )
+        .bind(event_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(DbError::database)?;
+        row.as_ref().map(hashed_event_from_row).transpose()
+    }
+
+    /// Reads a bounded page of committed events after the supplied global sequence.
+    ///
+    /// The limit is clamped to 100 events to keep the read API bounded.
+    ///
+    /// # Errors
+    ///
+    /// Returns a sanitized `SQLite` failure or an invalid stored-event error.
+    pub async fn events_after(
+        &self,
+        after_sequence: u64,
+        limit: usize,
+    ) -> Result<Vec<HashedEvent>, DbError> {
+        self.events_page(Some(after_sequence), limit).await
+    }
+
+    /// Reads the first bounded page, or a page after a committed sequence.
+    ///
+    /// # Errors
+    ///
+    /// Returns a sanitized `SQLite` failure or an invalid stored-event error.
+    pub async fn events_page(
+        &self,
+        after_sequence: Option<u64>,
+        limit: usize,
+    ) -> Result<Vec<HashedEvent>, DbError> {
+        let after_sequence = after_sequence
+            .map(i64::try_from)
+            .transpose()
+            .map_err(DbError::integrity)?;
+        let limit = i64::try_from(limit.clamp(1, 100)).map_err(DbError::integrity)?;
+        let rows = if let Some(after_sequence) = after_sequence {
+            sqlx::query(
+                "SELECT sequence, event_id, trace_id, schema_version, event_type, occurred_at,
+                        detail_json, previous_hash, event_hash
+                 FROM trajectory_events WHERE sequence > ? ORDER BY sequence LIMIT ?",
+            )
+            .bind(after_sequence)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+        } else {
+            sqlx::query(
+                "SELECT sequence, event_id, trace_id, schema_version, event_type, occurred_at,
+                        detail_json, previous_hash, event_hash
+                 FROM trajectory_events ORDER BY sequence LIMIT ?",
+            )
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+        }
+        .map_err(DbError::database)?;
+        rows.iter().map(hashed_event_from_row).collect()
+    }
+
     /// Flushes queued writes, checkpoints WAL and stops the writer.
     ///
     /// # Errors
@@ -422,24 +495,10 @@ async fn verify_pool(pool: &SqlitePool) -> Result<(), DbError> {
     .fetch_all(pool)
     .await
     .map_err(DbError::database)?;
-    let mut events = Vec::with_capacity(rows.len());
-    for row in rows {
-        let sequence: i64 = row.try_get("sequence").map_err(DbError::database)?;
-        let event_type: String = row.try_get("event_type").map_err(DbError::database)?;
-        let detail_json: String = row.try_get("detail_json").map_err(DbError::database)?;
-        events.push(HashedEvent {
-            schema: row.try_get("schema_version").map_err(DbError::database)?,
-            sequence: u64::try_from(sequence).map_err(DbError::integrity)?,
-            id: row.try_get("event_id").map_err(DbError::database)?,
-            trace_id: row.try_get("trace_id").map_err(DbError::database)?,
-            occurred_at: row.try_get("occurred_at").map_err(DbError::database)?,
-            kind: EventKind::from_wire_name(&event_type).map_err(DbError::integrity)?,
-            detail: from_str::<BTreeMap<String, String>>(&detail_json)
-                .map_err(DbError::integrity)?,
-            previous_hash: row.try_get("previous_hash").map_err(DbError::database)?,
-            hash: row.try_get("event_hash").map_err(DbError::database)?,
-        });
-    }
+    let events = rows
+        .iter()
+        .map(hashed_event_from_row)
+        .collect::<Result<Vec<_>, _>>()?;
     TrajectoryChain::verify(&events).map_err(DbError::integrity)?;
 
     let state = sqlx::query(
@@ -459,6 +518,23 @@ async fn verify_pool(pool: &SqlitePool) -> Result<(), DbError> {
         ));
     }
     Ok(())
+}
+
+fn hashed_event_from_row(row: &SqliteRow) -> Result<HashedEvent, DbError> {
+    let sequence: i64 = row.try_get("sequence").map_err(DbError::database)?;
+    let event_type: String = row.try_get("event_type").map_err(DbError::database)?;
+    let detail_json: String = row.try_get("detail_json").map_err(DbError::database)?;
+    Ok(HashedEvent {
+        schema: row.try_get("schema_version").map_err(DbError::database)?,
+        sequence: u64::try_from(sequence).map_err(DbError::integrity)?,
+        id: row.try_get("event_id").map_err(DbError::database)?,
+        trace_id: row.try_get("trace_id").map_err(DbError::database)?,
+        occurred_at: row.try_get("occurred_at").map_err(DbError::database)?,
+        kind: EventKind::from_wire_name(&event_type).map_err(DbError::integrity)?,
+        detail: from_str::<BTreeMap<String, String>>(&detail_json).map_err(DbError::integrity)?,
+        previous_hash: row.try_get("previous_hash").map_err(DbError::database)?,
+        hash: row.try_get("event_hash").map_err(DbError::database)?,
+    })
 }
 
 #[cfg(test)]

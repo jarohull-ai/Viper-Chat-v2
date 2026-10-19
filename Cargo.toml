@@ -3,6 +3,7 @@ members = [
   "crates/viper-core",
   "crates/viper-db",
   "crates/viper-seed",
+  "crates/viper-server",
   "crates/viper-trajectory",
 ]
 resolver = "2"
@@ -14,6 +15,7 @@ rust-version = "1.97"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 
 [workspace.dependencies]
+axum = "0.8.9"
 getrandom = "0.4.3"
 hmac = { version = "0.13.0", features = ["zeroize"] }
 regex = "1.13.1"
@@ -27,6 +29,7 @@ thiserror = "2.0.21"
 tokio = { version = "1.53.3", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 zeroize = "1.9.1"
 yaml_serde = "0.10.7"
+tower = { version = "0.5.2", features = ["util"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
