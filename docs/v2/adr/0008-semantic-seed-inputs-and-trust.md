@@ -84,6 +84,12 @@ defects and its license requires a separate commercial grant.
     its status is constrained to `uncalibrated`. Provider collection remains
     disabled until a real model/corpus is pinned and an explicit data-collection,
     retention, and human-labeling policy is approved.
+    **Implementation status:** migration `0003` also copies plaintext
+    metadata and a source reference into the append-only ledger, so this
+    prototype API is not suitable for real-user collection. ADR-0009 proposes
+    an erasable encrypted-payload design. Until that design is implemented,
+    reviewed, and its acceptance tests pass, observations must remain synthetic
+    or local-only and provider collection must stay disabled.
 
 ## Input contract
 
