@@ -156,12 +156,15 @@ a test snapshot into production.
    the only tier a Vault dev server can establish.
 2. **Snapshot anti-rollback (durable isolated Raft cluster):** create key and
    ciphertext, capture snapshot A, delete the key and persist a deletion
-   tombstone in a separately protected, monotonic control store, then capture
+   tombstone in the Erasure Registry and its independent monotonic anchor, then capture
    snapshot B. Restore A into an isolated cluster. Before serving any request,
    replay all post-A tombstones and verify the key is absent and decryption
    fails. Also restore A without replay as a negative control: if the key
    returns, startup/readiness must remain blocked until tombstone reconciliation
-   completes. The tombstone source must be independently administered and
+   completes. Also restore the Registry from a snapshot predating the
+   tombstone: the independent anchor must detect rollback and either replay the
+   missing tombstone or keep the entire service unavailable. The tombstone
+   source must be independently administered and
    outside the Vault snapshot/restore domain, with freshness verified so an old
    tombstone backup cannot silently roll back erasures. Restore B and confirm
    the deleted state remains. Test a crash at every deletion/reconciliation
@@ -191,6 +194,62 @@ must pass, including restore and replica checks. A pass validates only that
 tested configuration; it does not establish legal compliance or general
 production readiness. Until then, provider collection remains disabled.
 
+Registry-specific cases are also mandatory: (a) retry the same deletion through
+every state transition and verify exactly one logical tombstone with an
+idempotent terminal result; (b) partition the Registry quorum and verify no
+delete is acknowledged as complete and all decrypts fail closed; (c) restore an
+old Registry snapshot and verify the external checkpoint detects rollback; and
+(d) attempt promotion of a Vault replica missing the latest tombstone and
+verify it is quarantined before it can serve any request. The concrete
+consensus store and WORM/checkpoint product remain deployment choices; the
+backend must meet these invariants before implementation is accepted.
+
+## Tombstone authority and replication contract (proposed)
+
+The authoritative tombstones live in a dedicated append-only Erasure Registry,
+separate from Vault storage, Vault snapshots, and the observation database.
+This is a service/consensus-backed store, not a local file or a second SQLite
+file on the same host. Each tombstone contains only a random opaque Vault key
+handle, a monotonically increasing sequence, a state (`pending` or `confirmed`),
+and the minimum operation metadata needed to reconcile deletion. It contains
+no user/workspace ID, prompt, LID value, or source-event reference. The random
+handle may still be linkable to ciphertext in old backups, so access and
+retention of the registry itself must be controlled.
+
+The Registry is authoritative for whether a key may be used. It must:
+
+- commit tombstone appends to a quorum spanning every failover-eligible failure
+  domain before acknowledging a deletion request;
+- publish signed, monotonically numbered checkpoints to an independently
+  administered immutable/WORM anchor outside both Vault and Registry backup
+  rollback domains; after restore, verify anchor freshness and replay every
+  later tombstone before readiness;
+- replicate the tombstone stream synchronously (or with an equivalent quorum
+  guarantee) to every failover-eligible site. A site that is offline or behind
+  is removed from the failover/read path until it has caught up;
+- fail closed if the quorum, freshest checkpoint, or any eligible site's
+  deletion state cannot be established. Operators cannot force readiness by
+  acknowledging a stale snapshot.
+
+Deletion protocol: transition the record to `deletion_pending` and deny all
+application decrypts; append the tombstone to Registry quorum and anchor its
+checkpoint; delete the named Transit key in the Vault primary; wait for
+Vault's consistency mechanism and verify the key is absent on every
+failover-eligible cluster; then mark the tombstone `confirmed`. If any step is
+uncertain, keep the record inaccessible and deletion pending, alert, and retry.
+Do not report erasure complete until all eligible Vault copies are confirmed
+absent. Direct Vault access is restricted to the adapter identity and audited;
+the application must check Registry state before every decrypt. Vault
+replication is eventually consistent and may serve stale reads, so a successful
+primary delete alone is not sufficient evidence.
+
+On startup, restore, or promotion, the adapter must obtain the freshest signed
+Registry checkpoint and reconcile tombstones before accepting decrypt requests.
+If the Registry/anchor is unavailable, stale, or inconsistent, readiness stays
+false. If this deployment cannot provide the stated quorum, anchor, and
+fail-closed routing, it must not enable collection or use Vault replicas for
+this key domain.
+
 ## Consequences and limitations
 
 - The ledger proves an opaque encrypted record existed; the separately held
@@ -211,5 +270,6 @@ production readiness. Until then, provider collection remains disabled.
 - [Vault Transit key deletion API](https://developer.hashicorp.com/vault/api-docs/secret/transit)
 - [Vault snapshot restore procedure](https://developer.hashicorp.com/vault/docs/sysadmin/snapshots/restore)
 - [Vault replication requirements and Transit key replication](https://developer.hashicorp.com/vault/docs/enterprise/replication)
+- [Vault replication consistency and stale-read behavior](https://developer.hashicorp.com/vault/docs/enterprise/consistency)
 - [YubiHSM 2 object capacity](https://docs.yubico.com/hardware/yubihsm-2/hsm-2-user-guide/hsm2-intro-core-concepts.html)
 - [YubiHSM 2 backup and restore](https://docs.yubico.com/hardware/yubihsm-2/hsm-2-user-guide/hsm2-backup-restore.html)
