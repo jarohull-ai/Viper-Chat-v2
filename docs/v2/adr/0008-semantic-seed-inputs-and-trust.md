@@ -54,13 +54,20 @@ defects and its license requires a separate commercial grant.
    client and never downloads data. New data means a new immutable version
    directory, not mutation of an existing release.
 10. Keep labeled evaluation data outside the trusted reference corpus. The
-    initial `evaluation/semantic-v1/` benchmark is synthetic and has four
-    balanced labels (in-distribution, out-of-domain, prompt injection, factual
-    error), written ground truth, and development/holdout splits. It is a pilot
-    only. Proposed numeric LID cutoffs are hypotheses, not accepted policy;
-    do not encode thresholds until a larger, independently reviewed evaluation
-    demonstrates stable class separation with the pinned model, corpus, and
-    neighbor count. LID alone must never approve an action.
+    `evaluation/semantic-v1/` synthetic pilot has 256 cases: four balanced
+    labels (in-distribution, out-of-domain, prompt injection, factual error),
+    with 192 development and 64 holdout cases and human-readable ground truth.
+    Injection scenarios explicitly cover direct override, roleplay jailbreak,
+    authority impersonation, indirect document/tool-output injection, delimiter
+    confusion, encoded payload, multilingual override, fictional framing,
+    policy reinterpretation, recency claims, exfiltration, chain-of-command
+    claims, staged escalation, markdown comments, and Unicode lookalikes. OOD
+    scenarios span medicine, geology, music, finance, cooking, astronomy,
+    biology, and literature. This remains synthetic pilot data, not production
+    calibration. Proposed numeric LID cutoffs are hypotheses, not accepted
+    policy; do not encode thresholds until a larger, independently reviewed
+    evaluation demonstrates stable class separation with the pinned model,
+    corpus, and neighbor count. LID alone must never approve an action.
 
 ## Input contract
 
@@ -144,9 +151,11 @@ suite passes.
   contains 100 provenance-tracked samples across four categories, including
   project-owned material and paraphrases of public Rust documentation. It is
   still too small to establish production thresholds.
-- `evaluation/semantic-v1` contains 64 synthetic labeled cases, balanced across
-  four classes and split into development/holdout. It is not calibration proof;
-  expand and review it before evaluator policy is enabled.
+- `evaluation/semantic-v1` contains 256 synthetic labeled cases, balanced
+  across four classes and split into development/holdout. Its generator is
+  checked in for reproducibility. It is not calibration proof; independent
+  review and broader non-synthetic evaluation are still required before
+  evaluator policy is enabled.
 - Existing IPC v2 clients remain compatible, but cannot use semantic mode.
 - A real-provider, distinct-UID end-to-end test remains required before the
   slice is considered complete.

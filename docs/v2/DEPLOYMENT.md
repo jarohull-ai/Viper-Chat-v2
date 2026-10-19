@@ -42,14 +42,18 @@ from the loaded `Corpus` and must be recorded alongside any later semantic
 assessment. Never replace a corpus release in place: publish a new version and
 retain the old directory for reproducibility.
 
-The separate `evaluation/semantic-v1/` benchmark has 64 synthetic cases,
-balanced across in-distribution answers, out-of-domain text, prompt injection,
-and factual errors. Each case has written ground truth; each label has 12
-development and 4 holdout cases. This is a pilot, not threshold calibration.
-Do not tune against the holdout or merge these cases into the trusted reference
-corpus. LID thresholds remain unset until a larger, independently reviewed
-benchmark has been run with the pinned model and corpus; no threshold alone
-may approve an action.
+The separate `evaluation/semantic-v1/` benchmark has 256 synthetic cases,
+balanced across four labels (64 each), with 192 development and 64 holdout
+cases. Injection examples cover 16 named techniques, including direct override,
+roleplay, authority impersonation, indirect/tool-output injection, delimiter
+confusion, encoded and multilingual payloads, exfiltration, and Unicode
+lookalikes. OOD examples span eight domains. The deterministic generator is
+`evaluation/semantic-v1/generate.py`; run it explicitly to regenerate the
+JSONL, manifest, and checksum. Each case has written ground truth. This remains
+a synthetic pilot, not threshold calibration. Do not tune against the holdout
+or merge these cases into the trusted reference corpus. LID thresholds remain
+unset until a larger, independently reviewed evaluation has been run with the
+pinned model and corpus; no threshold alone may approve an action.
 
 `viper-server` is a Linux executable and HTTP API bootstrap, not yet a complete
 production deployment. It only binds to `127.0.0.1`; there is no remote bind
