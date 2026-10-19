@@ -42,7 +42,38 @@ overwrites, rotates, or deletes existing credentials. For now, an operator
 supplies the private file to the provider on inherited FD 3
 (`3</var/lib/viper-seed/credentials/signing-key`); do not copy it into argv,
 an environment variable, or a server-owned location. Automated rotation and a
-systemd credentials handoff are separate follow-up work.
+automated rotation workflow remain separate follow-up work.
+
+## systemd provider service
+
+`deploy/systemd/viper-seed-provider.service` is a hardened starting template.
+It assumes static `viper-seed` and `viper-ipc` accounts/groups, the provider
+binary at `/usr/local/bin/viper-seed-provider`, the credential and runtime
+paths above, and a `viper-server` UID of `990` (edit `--client-uid` to match).
+Add the server account to `viper-ipc`; do not make the socket world-accessible.
+The template uses systemd's credential-directory specifier (`%d`) and opens
+that credential on FD 3 for the provider. The key bytes never appear in unit
+arguments or environment. `RuntimeDirectory=` gives the provider its managed
+socket directory; `ProtectSystem=strict` leaves that directory writable while
+keeping the rest of the filesystem read-only.
+
+Install and verify the template for the target host's systemd version before
+enabling it:
+
+```sh
+install -o root -g root -m 0644 deploy/systemd/viper-seed-provider.service \
+  /etc/systemd/system/viper-seed-provider.service
+systemd-analyze verify /etc/systemd/system/viper-seed-provider.service
+systemctl daemon-reload
+systemctl enable --now viper-seed-provider.service
+```
+
+This is a deployment example, not a claim of host-level validation. Review the
+UID/GID and paths, run `systemd-analyze verify` on the deployment distribution,
+then verify socket ownership and an authenticated client connection. The full
+root-only server + real-provider + SQLite end-to-end test remains separate;
+run it in an isolated local setup or on a dedicated privileged runner, not as
+part of the current standard CI job.
 
 ## Privileged test scope
 
@@ -102,13 +133,12 @@ viper-seed-provider \
   3</run/credentials/viper-seed-signing-key
 ```
 
-The runtime directory must already exist, be provider-owned, non-writable by
-group/other, and traversable by the dedicated IPC group. The provider will not
-remove stale socket paths at startup. It checks the received Tool Guard evidence
+For manual starts, the runtime directory must already exist, be provider-owned,
+non-writable by group/other, and traversable by the dedicated IPC group. The
+provider will not remove stale socket paths at startup. It checks the received Tool Guard evidence
 against its own loaded policy before signing a decision. This initial provider
 is deliberately policy-backed: it is not an LLM, does not execute tools, and
-does not claim an independent semantic SEED decider. A separate first-run
-credential provisioner, systemd unit/hardening, rotation orchestration, and a
-broader provider decision engine remain follow-up work. Do not expose this
+does not claim an independent semantic SEED decider. Rotation orchestration
+and a broader provider decision engine remain follow-up work. Do not expose this
 loopback API through a reverse proxy before the separate authenticated
 remote-API design exists.

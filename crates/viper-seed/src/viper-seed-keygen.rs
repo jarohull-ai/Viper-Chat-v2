@@ -52,8 +52,8 @@ fn run(args: &Args) -> Result<(), &'static str> {
         return Err("output paths must be distinct absolute paths");
     }
 
-    validate_parent(&args.private_output)?;
-    validate_parent(&args.public_output)?;
+    validate_parent(&args.private_output, Some(args.provider_gid))?;
+    validate_parent(&args.public_output, None)?;
     for path in [&args.private_output, &args.public_output] {
         if fs::symlink_metadata(path).is_ok() {
             return Err("refusing to overwrite an existing output or symlink");
@@ -124,15 +124,19 @@ fn run(args: &Args) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn validate_parent(output: &Path) -> Result<(), &'static str> {
+fn validate_parent(output: &Path, required_group: Option<u32>) -> Result<(), &'static str> {
     let parent = output.parent().ok_or("output has no parent directory")?;
     let metadata = fs::symlink_metadata(parent).map_err(|_| "output parent is unavailable")?;
     if !metadata.file_type().is_dir()
         || metadata.uid() != 0
         || metadata.mode() & 0o022 != 0
         || metadata.mode() & 0o500 != 0o500
+        || required_group
+            .is_some_and(|group| metadata.gid() != group || metadata.mode() & 0o010 == 0)
     {
-        return Err("output parents must be root-owned, non-writable by group/other directories");
+        return Err(
+            "output parents must be secure; private parent must be traversable by provider GID",
+        );
     }
     Ok(())
 }
