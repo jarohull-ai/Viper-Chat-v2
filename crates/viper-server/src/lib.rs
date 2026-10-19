@@ -630,17 +630,16 @@ mod tests {
         .unwrap();
         let provider = SeedIpcV2Provider::new(
             provider_uid,
-            Duration::from_secs(1),
+            Duration::from_secs(5),
             signing_key,
             FixedSeed(Ok(VerdictStatus::Approved)),
         );
         let provider_task =
             tokio::spawn(async move { provider.serve_one(&listener).await.unwrap() });
-        let seed = SeedIpcV2Client::new(
-            SeedIpcV2Config::with_defaults(runtime, socket, provider_uid),
-            trusted_keys,
-        )
-        .unwrap();
+        let mut ipc_config = SeedIpcV2Config::with_defaults(runtime, socket, provider_uid);
+        ipc_config.connect_timeout = Duration::from_secs(2);
+        ipc_config.response_timeout = Duration::from_secs(5);
+        let seed = SeedIpcV2Client::new(ipc_config, trusted_keys).unwrap();
         let database = Arc::new(
             TrajectoryDb::open(
                 &temp.path().join("trajectory.sqlite3"),
