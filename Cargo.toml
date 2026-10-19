@@ -2,6 +2,7 @@
 members = [
   "crates/viper-core",
   "crates/viper-db",
+  "crates/viper-erasure-registry",
   "crates/viper-seed",
   "crates/viper-server",
   "crates/viper-trajectory",
