@@ -75,6 +75,13 @@ defects and its license requires a separate commercial grant.
     persistence, or telemetry-export behavior; it is not connected to the
     provider decision path. Never collect raw user prompts or embeddings as a
     side effect.
+12. Persist diagnostic observations only through `viper-db`'s serialized writer.
+    Migration `0003` stores bounded LID/model/corpus metadata, an existing source
+    decision event reference, and a `quality_gate` trajectory event in the same
+    transaction. The table accepts no prompt, completion, or embedding payload;
+    its status is constrained to `uncalibrated`. Provider collection remains
+    disabled until a real model/corpus is pinned and an explicit data-collection,
+    retention, and human-labeling policy is approved.
 
 ## Input contract
 
@@ -166,6 +173,10 @@ suite passes.
 - `semantic::evaluate_lid` is a diagnostic-only observation API. It validates
   provenance syntax and returns the raw LID plus model/corpus identity with
   `Uncalibrated`; it cannot produce a decision or persist interaction data.
+- `viper-db` migration `0003_lid_observations.sql` persists only numeric and
+  provenance metadata, linked to a committed source event and to a `quality_gate`
+  event in the hash chain. The row and hash-chain event commit atomically through
+  the single writer. This schema is not yet wired into provider traffic.
 - Existing IPC v2 clients remain compatible, but cannot use semantic mode.
 - A real-provider, distinct-UID end-to-end test remains required before the
   slice is considered complete.

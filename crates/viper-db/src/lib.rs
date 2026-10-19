@@ -29,6 +29,8 @@ pub enum DbErrorCode {
     Integrity,
     /// The bounded writer is not available.
     WriterUnavailable,
+    /// A diagnostic LID observation failed validation.
+    InvalidObservation,
 }
 
 /// Sanitized database failure that can cross task boundaries.
@@ -100,6 +102,96 @@ impl CommittedEvent {
     }
 }
 
+/// LID metadata accepted for durable storage; it deliberately contains no prompt or embedding.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LidObservationInput {
+    /// Stable caller-generated identifier.
+    pub observation_id: String,
+    /// Already-committed trajectory event this observation describes.
+    pub event_id: String,
+    /// Observation timestamp in RFC 3339 form.
+    pub observed_at: String,
+    /// Raw provider-computed geometric LID value (diagnostic only).
+    pub lid: f64,
+    /// Number of nearest neighbors used by the estimator.
+    pub neighbors_used: u16,
+    /// Stable model identifier/revision.
+    pub model_id: String,
+    /// SHA-256 fingerprint of the exact embedding bundle.
+    pub model_bundle_sha256: String,
+    /// Verified reference corpus version.
+    pub corpus_version: String,
+    /// SHA-256 of the exact verified corpus manifest bytes.
+    pub corpus_manifest_sha256: String,
+}
+
+/// Diagnostic LID observation persisted in `SQLite`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LidObservation {
+    /// Stable observation identifier.
+    pub observation_id: String,
+    /// Associated committed trajectory event identifier.
+    pub event_id: String,
+    /// Trajectory event ID containing the hash-chained observation detail.
+    pub audit_event_id: String,
+    /// Global sequence of the hash-chained observation event.
+    pub audit_event_sequence: u64,
+    /// Hash of the hash-chained observation event.
+    pub audit_event_hash: String,
+    /// Observation timestamp.
+    pub observed_at: String,
+    /// Raw LID value, not a probability or verdict.
+    pub lid: f64,
+    /// Number of neighbors used.
+    pub neighbors_used: u16,
+    /// Model identity used for the embedding.
+    pub model_id: String,
+    /// Model bundle SHA-256.
+    pub model_bundle_sha256: String,
+    /// Verified reference corpus version.
+    pub corpus_version: String,
+    /// Exact corpus manifest SHA-256.
+    pub corpus_manifest_sha256: String,
+    /// Current fixed state; no calibrated interpretation exists yet.
+    pub status: LidObservationStatus,
+}
+
+/// Calibration state for a persisted LID observation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LidObservationStatus {
+    /// No approved calibration has been applied.
+    Uncalibrated,
+}
+
+/// Opaque receipt proving that an LID observation was committed.
+#[derive(Debug, PartialEq)]
+#[must_use = "a committed LID observation receipt should be explicitly inspected"]
+pub struct CommittedLidObservation {
+    observation: LidObservation,
+    audit_event: HashedEvent,
+}
+
+impl CommittedLidObservation {
+    fn after_commit(observation: LidObservation, audit_event: HashedEvent) -> Self {
+        Self {
+            observation,
+            audit_event,
+        }
+    }
+
+    /// Returns the durably committed, diagnostic-only observation.
+    #[must_use]
+    pub fn observation(&self) -> &LidObservation {
+        &self.observation
+    }
+
+    /// Returns the trajectory event committed atomically with the observation row.
+    #[must_use]
+    pub fn audit_event(&self) -> &HashedEvent {
+        &self.audit_event
+    }
+}
+
 /// Bounded writer and `SQLite` durability settings.
 #[derive(Debug, Clone)]
 pub struct LedgerConfig {
@@ -149,6 +241,10 @@ enum WriterCommand {
         input: EventInput,
         reply: oneshot::Sender<Result<CommittedEvent, DbError>>,
     },
+    RecordLidObservation {
+        input: LidObservationInput,
+        reply: oneshot::Sender<Result<CommittedLidObservation, DbError>>,
+    },
     Shutdown {
         reply: oneshot::Sender<()>,
     },
@@ -170,6 +266,30 @@ impl LedgerAppender {
         let (reply, response) = oneshot::channel();
         self.sender
             .send(WriterCommand::Append { input, reply })
+            .await
+            .map_err(|_| DbError::writer_unavailable("trajectory writer stopped"))?;
+        response
+            .await
+            .map_err(|_| DbError::writer_unavailable("trajectory writer dropped acknowledgement"))?
+    }
+
+    /// Persist a diagnostic observation through the same serialized writer as trajectory events.
+    ///
+    /// The referenced event must already be committed. The response is returned only after the
+    /// observation transaction commits. Raw prompts, outputs and embeddings are not accepted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for malformed metadata, a missing event, database failure, or a stopped
+    /// writer.
+    pub async fn record_lid_observation(
+        &self,
+        input: LidObservationInput,
+    ) -> Result<CommittedLidObservation, DbError> {
+        validate_lid_observation(&input)?;
+        let (reply, response) = oneshot::channel();
+        self.sender
+            .send(WriterCommand::RecordLidObservation { input, reply })
             .await
             .map_err(|_| DbError::writer_unavailable("trajectory writer stopped"))?;
         response
@@ -242,6 +362,35 @@ impl TrajectoryDb {
             .await
             .map_err(DbError::database)?;
         u64::try_from(count).map_err(DbError::integrity)
+    }
+
+    /// Loads one persisted diagnostic LID observation by ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns a sanitized `SQLite` failure or an integrity error for malformed stored metadata.
+    pub async fn lid_observation_by_id(
+        &self,
+        observation_id: &str,
+    ) -> Result<Option<LidObservation>, DbError> {
+        let row = sqlx::query(
+            "SELECT lid_observations.observation_id, lid_observations.event_id,
+                    lid_observations.audit_event_id, lid_observations.observed_at,
+                    lid_observations.lid, lid_observations.neighbors_used,
+                    lid_observations.model_id, lid_observations.model_bundle_sha256,
+                    lid_observations.corpus_version, lid_observations.corpus_manifest_sha256,
+                    lid_observations.status,
+                    trajectory_events.sequence AS audit_event_sequence,
+                    trajectory_events.event_hash AS audit_event_hash
+             FROM lid_observations
+             JOIN trajectory_events ON trajectory_events.event_id = lid_observations.audit_event_id
+             WHERE observation_id = ?",
+        )
+        .bind(observation_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(DbError::database)?;
+        row.as_ref().map(lid_observation_from_row).transpose()
     }
 
     /// Looks up one persisted event by its globally unique identifier.
@@ -356,55 +505,218 @@ fn connect_options(path: &Path, busy_timeout: Duration) -> Result<SqliteConnectO
         .map_err(DbError::database)
 }
 
+fn validate_lid_observation(input: &LidObservationInput) -> Result<(), DbError> {
+    let valid_text = |value: &str, limit: usize| {
+        !value.trim().is_empty() && value.len() <= limit && !value.chars().any(char::is_control)
+    };
+    let valid_sha256 = |value: &str| {
+        value.len() == 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    };
+    let valid_id = |value: &str| {
+        valid_text(value, 128)
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"._:-".contains(&byte))
+    };
+    if !valid_id(&input.observation_id)
+        || !valid_text(&input.event_id, 128)
+        || !valid_text(&input.observed_at, 64)
+        || !input.lid.is_finite()
+        || input.lid <= 0.0
+        // Storage sanity bound only; this is not a classification or decision threshold.
+        || input.lid > 1_000_000_000_000.0
+        || !(2..=256).contains(&input.neighbors_used)
+        || !valid_text(&input.model_id, 128)
+        || !valid_sha256(&input.model_bundle_sha256)
+        || !valid_text(&input.corpus_version, 64)
+        || !valid_sha256(&input.corpus_manifest_sha256)
+    {
+        return Err(DbError {
+            code: DbErrorCode::InvalidObservation,
+            message: "LID observation metadata is invalid".into(),
+        });
+    }
+    Ok(())
+}
+
 async fn run_writer(
     mut connection: SqliteConnection,
     mut receiver: mpsc::Receiver<WriterCommand>,
     config: LedgerConfig,
 ) {
-    while let Some(command) = receiver.recv().await {
-        let WriterCommand::Append { input, reply } = command else {
-            if let WriterCommand::Shutdown { reply } = command {
-                let _ = reply.send(());
-            }
-            return;
+    let mut pending = None;
+    loop {
+        let command = match pending.take() {
+            Some(command) => command,
+            None => match receiver.recv().await {
+                Some(command) => command,
+                None => return,
+            },
         };
+        match command {
+            WriterCommand::Append { input, reply } => {
+                let mut batch = vec![(input, reply)];
+                let deadline = Instant::now() + config.max_batch_delay;
+                let mut shutdown_reply = None;
+                while batch.len() < config.max_batch_events {
+                    match timeout_at(deadline, receiver.recv()).await {
+                        Ok(Some(WriterCommand::Append { input, reply })) => {
+                            batch.push((input, reply));
+                        }
+                        Ok(Some(command @ WriterCommand::RecordLidObservation { .. })) => {
+                            pending = Some(command);
+                            break;
+                        }
+                        Ok(Some(WriterCommand::Shutdown { reply })) => {
+                            shutdown_reply = Some(reply);
+                            break;
+                        }
+                        Ok(None) | Err(_) => break,
+                    }
+                }
 
-        let mut batch = vec![(input, reply)];
-        let deadline = Instant::now() + config.max_batch_delay;
-        let mut shutdown_reply = None;
-        while batch.len() < config.max_batch_events {
-            match timeout_at(deadline, receiver.recv()).await {
-                Ok(Some(WriterCommand::Append { input, reply })) => batch.push((input, reply)),
-                Ok(Some(WriterCommand::Shutdown { reply })) => {
-                    shutdown_reply = Some(reply);
-                    break;
+                match persist_batch(
+                    &mut connection,
+                    batch.iter().map(|(input, _)| input.clone()),
+                )
+                .await
+                {
+                    Ok(events) => {
+                        for ((_, reply), event) in batch.into_iter().zip(events) {
+                            let _ = reply.send(Ok(CommittedEvent::after_commit(event)));
+                        }
+                    }
+                    Err(error) => {
+                        for (_, reply) in batch {
+                            let _ = reply.send(Err(error.clone()));
+                        }
+                    }
                 }
-                Ok(None) | Err(_) => break,
-            }
-        }
-
-        match persist_batch(
-            &mut connection,
-            batch.iter().map(|(input, _)| input.clone()),
-        )
-        .await
-        {
-            Ok(events) => {
-                for ((_, reply), event) in batch.into_iter().zip(events) {
-                    let _ = reply.send(Ok(CommittedEvent::after_commit(event)));
+                if let Some(reply) = shutdown_reply {
+                    let _ = reply.send(());
+                    return;
                 }
             }
-            Err(error) => {
-                for (_, reply) in batch {
-                    let _ = reply.send(Err(error.clone()));
-                }
+            WriterCommand::RecordLidObservation { input, reply } => {
+                let result = persist_lid_observation(&mut connection, input).await;
+                let _ = reply.send(result.map(|(observation, event)| {
+                    CommittedLidObservation::after_commit(observation, event)
+                }));
             }
-        }
-        if let Some(reply) = shutdown_reply {
-            let _ = reply.send(());
-            return;
+            WriterCommand::Shutdown { reply } => {
+                let _ = reply.send(());
+                return;
+            }
         }
     }
+}
+
+async fn persist_lid_observation(
+    connection: &mut SqliteConnection,
+    input: LidObservationInput,
+) -> Result<(LidObservation, HashedEvent), DbError> {
+    validate_lid_observation(&input)?;
+    let trace_id: Option<String> =
+        sqlx::query_scalar("SELECT trace_id FROM trajectory_events WHERE event_id = ?")
+            .bind(&input.event_id)
+            .fetch_optional(&mut *connection)
+            .await
+            .map_err(DbError::database)?;
+    let trace_id = trace_id.ok_or_else(|| DbError {
+        code: DbErrorCode::InvalidObservation,
+        message: "LID observation must reference a committed event".into(),
+    })?;
+
+    let audit_event_id = format!("lid-observation:{}", input.observation_id);
+    let detail = BTreeMap::from([
+        ("observation_id".into(), input.observation_id.clone()),
+        ("source_event_id".into(), input.event_id.clone()),
+        ("lid".into(), input.lid.to_string()),
+        ("neighbors_used".into(), input.neighbors_used.to_string()),
+        ("model_id".into(), input.model_id.clone()),
+        (
+            "model_bundle_sha256".into(),
+            input.model_bundle_sha256.clone(),
+        ),
+        ("corpus_version".into(), input.corpus_version.clone()),
+        (
+            "corpus_manifest_sha256".into(),
+            input.corpus_manifest_sha256.clone(),
+        ),
+        ("status".into(), "uncalibrated".into()),
+    ]);
+    let audit_event = EventInput {
+        id: audit_event_id.clone(),
+        trace_id,
+        occurred_at: input.observed_at.clone(),
+        kind: EventKind::QualityGate,
+        detail,
+    };
+
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *connection)
+        .await
+        .map_err(DbError::database)?;
+    let persisted = async {
+        let mut events =
+            persist_batch_in_transaction(connection, std::iter::once(audit_event)).await?;
+        let audit_event = events
+            .pop()
+            .ok_or_else(|| DbError::integrity("missing committed LID audit event"))?;
+        sqlx::query(
+            "INSERT INTO lid_observations
+             (observation_id, event_id, audit_event_id, observed_at, lid, neighbors_used,
+              model_id, model_bundle_sha256, corpus_version, corpus_manifest_sha256, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'uncalibrated')",
+        )
+        .bind(&input.observation_id)
+        .bind(&input.event_id)
+        .bind(&audit_event_id)
+        .bind(&input.observed_at)
+        .bind(input.lid)
+        .bind(i64::from(input.neighbors_used))
+        .bind(&input.model_id)
+        .bind(&input.model_bundle_sha256)
+        .bind(&input.corpus_version)
+        .bind(&input.corpus_manifest_sha256)
+        .execute(&mut *connection)
+        .await
+        .map_err(DbError::database)?;
+        Ok::<_, DbError>(audit_event)
+    }
+    .await;
+    let audit_event = match persisted {
+        Ok(event) => {
+            if let Err(error) = sqlx::query("COMMIT").execute(&mut *connection).await {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *connection).await;
+                return Err(DbError::database(error));
+            }
+            event
+        }
+        Err(error) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *connection).await;
+            return Err(error);
+        }
+    };
+    let observation = LidObservation {
+        observation_id: input.observation_id,
+        event_id: input.event_id,
+        audit_event_id: audit_event.id.clone(),
+        audit_event_sequence: audit_event.sequence,
+        audit_event_hash: audit_event.hash.clone(),
+        observed_at: input.observed_at,
+        lid: input.lid,
+        neighbors_used: input.neighbors_used,
+        model_id: input.model_id,
+        model_bundle_sha256: input.model_bundle_sha256,
+        corpus_version: input.corpus_version,
+        corpus_manifest_sha256: input.corpus_manifest_sha256,
+        status: LidObservationStatus::Uncalibrated,
+    };
+    Ok((observation, audit_event))
 }
 
 async fn persist_batch(
@@ -537,6 +849,38 @@ fn hashed_event_from_row(row: &SqliteRow) -> Result<HashedEvent, DbError> {
     })
 }
 
+fn lid_observation_from_row(row: &SqliteRow) -> Result<LidObservation, DbError> {
+    let status: String = row.try_get("status").map_err(DbError::database)?;
+    if status != "uncalibrated" {
+        return Err(DbError::integrity(
+            "unknown persisted LID observation status",
+        ));
+    }
+    let neighbors_used: i64 = row.try_get("neighbors_used").map_err(DbError::database)?;
+    let audit_event_sequence: i64 = row
+        .try_get("audit_event_sequence")
+        .map_err(DbError::database)?;
+    Ok(LidObservation {
+        observation_id: row.try_get("observation_id").map_err(DbError::database)?,
+        event_id: row.try_get("event_id").map_err(DbError::database)?,
+        audit_event_id: row.try_get("audit_event_id").map_err(DbError::database)?,
+        audit_event_sequence: u64::try_from(audit_event_sequence).map_err(DbError::integrity)?,
+        audit_event_hash: row.try_get("audit_event_hash").map_err(DbError::database)?,
+        observed_at: row.try_get("observed_at").map_err(DbError::database)?,
+        lid: row.try_get("lid").map_err(DbError::database)?,
+        neighbors_used: u16::try_from(neighbors_used).map_err(DbError::integrity)?,
+        model_id: row.try_get("model_id").map_err(DbError::database)?,
+        model_bundle_sha256: row
+            .try_get("model_bundle_sha256")
+            .map_err(DbError::database)?,
+        corpus_version: row.try_get("corpus_version").map_err(DbError::database)?,
+        corpus_manifest_sha256: row
+            .try_get("corpus_manifest_sha256")
+            .map_err(DbError::database)?,
+        status: LidObservationStatus::Uncalibrated,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -558,6 +902,95 @@ mod tests {
                 },
             )]),
         }
+    }
+
+    fn lid_input(observation_id: &str, event_id: &str) -> LidObservationInput {
+        LidObservationInput {
+            observation_id: observation_id.into(),
+            event_id: event_id.into(),
+            observed_at: "2026-10-19T12:00:00Z".into(),
+            lid: 0.73,
+            neighbors_used: 12,
+            model_id: "test-model@revision-1".into(),
+            model_bundle_sha256: "a".repeat(64),
+            corpus_version: "v2".into(),
+            corpus_manifest_sha256: "b".repeat(64),
+        }
+    }
+
+    #[tokio::test]
+    async fn persists_lid_observation_after_committed_event_and_reopens_it() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("lid-observation.db");
+        let database = TrajectoryDb::open(&path, LedgerConfig::default())
+            .await
+            .unwrap();
+        let appender = database.appender();
+        let event = appender
+            .append(input("decision-1".into(), false))
+            .await
+            .unwrap();
+        let committed = appender
+            .record_lid_observation(lid_input("observation-1", "decision-1"))
+            .await
+            .unwrap();
+        assert_eq!(committed.observation().event_id, event.event().id);
+        assert!((committed.observation().lid - 0.73).abs() < f64::EPSILON);
+        assert_eq!(committed.observation().neighbors_used, 12);
+        assert_eq!(committed.audit_event().kind, EventKind::QualityGate);
+        assert_eq!(
+            committed.observation().audit_event_hash,
+            committed.audit_event().hash
+        );
+        assert_eq!(
+            committed.observation().status,
+            LidObservationStatus::Uncalibrated
+        );
+        let expected = committed.observation().clone();
+        assert_eq!(database.event_count().await.unwrap(), 2);
+        database.verify().await.unwrap();
+        database.shutdown().await.unwrap();
+
+        let reopened = TrajectoryDb::open(&path, LedgerConfig::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            reopened
+                .lid_observation_by_id("observation-1")
+                .await
+                .unwrap(),
+            Some(expected)
+        );
+        assert_eq!(reopened.event_count().await.unwrap(), 2);
+        reopened.verify().await.unwrap();
+        reopened.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_bad_lid_metadata_and_uncommitted_event_reference() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("invalid-lid-observation.db");
+        let database = TrajectoryDb::open(&path, LedgerConfig::default())
+            .await
+            .unwrap();
+        let appender = database.appender();
+        let mut invalid = lid_input("bad", "missing-event");
+        invalid.model_bundle_sha256 = "not-a-digest".into();
+        assert_eq!(
+            appender
+                .record_lid_observation(invalid)
+                .await
+                .unwrap_err()
+                .code,
+            DbErrorCode::InvalidObservation
+        );
+        let result = appender
+            .record_lid_observation(lid_input("orphan", "missing-event"))
+            .await
+            .unwrap_err();
+        assert_eq!(result.code, DbErrorCode::InvalidObservation);
+        assert_eq!(database.event_count().await.unwrap(), 0);
+        database.shutdown().await.unwrap();
     }
 
     #[tokio::test]

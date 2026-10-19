@@ -63,6 +63,16 @@ telemetry. A validly shaped digest is not proof that a model was independently
 verified; production callers must construct provenance from the verified
 local assets. No model has yet been frozen or approved for production use.
 
+Migration `0003_lid_observations.sql` adds a bounded metadata table for future
+diagnostic collection. `LedgerAppender::record_lid_observation` requires an
+already committed source event and writes both a `quality_gate` hash-chain
+event and the queryable row in one transaction. The returned receipt is only
+created after COMMIT. Stored fields are the numeric LID, neighbor count, model
+and corpus identities, timestamp, source event reference, and fixed
+`uncalibrated` status—never prompts, completions, or embeddings. The API is not
+connected to provider traffic. Before real collection, separately approve
+opt-in/notice, retention, access controls, and a human-labeling process.
+
 `viper-server` is a Linux executable and HTTP API bootstrap, not yet a complete
 production deployment. It only binds to `127.0.0.1`; there is no remote bind
 option, TLS termination, authentication layer, or tool-execution endpoint.
