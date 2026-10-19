@@ -19,3 +19,15 @@
 - Defined the product invariant, required subsystems, security behavior, workbench scope and
   explicit exclusions.
 - Established ADR-based change control. No post-freeze scope change is included in this entry.
+
+## 2.1.0 — 2026-10-19 (Phase 3 addendum)
+
+- Added the semantic SEED input/trust requirements: provenance-tagged context,
+  provider-computed geometry/LID, and no approval from missing or untrusted
+  evidence.
+- Kept IPC v2 unchanged; semantic request fields require a separately specified
+  and signed IPC v3.
+- Set Phase 3 scope to semantic SEED first, followed by sandboxed execution,
+  complete tool APIs, and privileged real-provider end-to-end verification.
+- Normative details: [`SPECIFICATION_ADDENDUM_2.1.md`](SPECIFICATION_ADDENDUM_2.1.md)
+  and [ADR-0008](adr/0008-semantic-seed-inputs-and-trust.md).
