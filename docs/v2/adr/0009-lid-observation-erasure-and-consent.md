@@ -109,12 +109,12 @@ experiments, not real-user collection.
   raises an alert. This is an operational safeguard, not a reason to retain a
   withdrawn key against the applicable policy.
 - **Backup restore:** database backups may contain ciphertext, never a DEK or
-  a wrapped DEK recoverable with a surviving KEK. A restore must reconcile each encrypted row with the key
-  service; missing/destroyed keys yield an explicit permanently-unavailable
-  record, never regenerated keys or fallback plaintext. Key-service backups,
-  if any, must preserve deletion tombstones so restoring an older snapshot
-  cannot resurrect a destroyed key. Define backup expiry and test restore from
-  snapshots predating deletion.
+  a wrapped DEK recoverable with a surviving KEK. A restore must reconcile
+  each encrypted row with the key service; missing/destroyed keys yield an
+  explicit permanently-unavailable record, never regenerated keys or fallback
+  plaintext. Key-service backups, if any, must preserve deletion tombstones so
+  restoring an older snapshot cannot resurrect a destroyed key. Define backup
+  expiry and test restore from snapshots predating deletion.
 - **Audit:** record aggregate counts and operation outcomes without stable
   observation/workspace identifiers or plaintext key IDs. Restrict key
   administration, require separate authorization for manual destructive
@@ -139,6 +139,58 @@ experiments, not real-user collection.
 - Define and test retention durations and backup expiry before enabling
   collection. The previously discussed 90 days remains a proposal, not policy.
 
+## Required Vault validation plan (not yet executed)
+
+The Vault dev server is only a disposable adapter-test target. It cannot prove
+snapshot recovery, replica deletion, production access control, or throughput
+under the deployed topology. Run destructive recovery cases in an isolated
+non-production network with disposable credentials and clusters; never restore
+a test snapshot into production.
+
+1. **Adapter and idempotency (dev/test Vault):** create an opaque per-record
+   key, encrypt/decrypt a fixture, delete it, confirm decrypt fails, delete it
+   a second time, and confirm the tombstone-backed result is idempotent
+   `already_destroyed` (do not treat an arbitrary not-found response as proof
+   that a previously valid key was destroyed). Confirm unknown IDs and
+   Vault/network errors fail closed. This is
+   the only tier a Vault dev server can establish.
+2. **Snapshot anti-rollback (durable isolated Raft cluster):** create key and
+   ciphertext, capture snapshot A, delete the key and persist a deletion
+   tombstone in a separately protected, monotonic control store, then capture
+   snapshot B. Restore A into an isolated cluster. Before serving any request,
+   replay all post-A tombstones and verify the key is absent and decryption
+   fails. Also restore A without replay as a negative control: if the key
+   returns, startup/readiness must remain blocked until tombstone reconciliation
+   completes. The tombstone source must be independently administered and
+   outside the Vault snapshot/restore domain, with freshness verified so an old
+   tombstone backup cannot silently roll back erasures. Restore B and confirm
+   the deleted state remains. Test a crash at every deletion/reconciliation
+   transition and idempotent replay.
+3. **Replication and failover (only if the selected deployment uses it):**
+   test the actual licensed topology. Vault Enterprise DR and performance
+   replication are separately licensed features; Transit encryption keys are
+   among replicated state. Create a key, wait for the documented replication
+   barrier, delete on the primary, and verify deletion on every secondary and
+   after DR promotion. During partition/lag, the system must not claim erasure
+   complete or serve decrypts from a potentially stale secondary. If equivalent
+   deletion guarantees cannot be demonstrated, disable replication for this
+   key domain or reject this backend/topology for collection.
+4. **Scale and recovery load:** first run a 1,000-observation smoke test for
+   create/encrypt/decrypt/delete, measuring key count, latency, errors, and
+   cleanup. This is plumbing evidence only—not production scale approval.
+   Then load-test against an owner-approved target derived from peak observation
+   creation rate, retained observations, deletion/expiry rate, and recovery
+   objectives. Record Vault version/edition, topology, policies, hardware,
+   sample size, p50/p95/p99 latency, throughput, errors, replication lag, and
+   restore time. Reject the backend if target limits or deletion objectives
+   are missed; do not infer scale from 1,000 records alone.
+
+**Release gate:** attach sanitized logs/results and exact Vault version and
+edition to the deployment evidence. All tiers applicable to the deployment
+must pass, including restore and replica checks. A pass validates only that
+tested configuration; it does not establish legal compliance or general
+production readiness. Until then, provider collection remains disabled.
+
 ## Consequences and limitations
 
 - The ledger proves an opaque encrypted record existed; the separately held
@@ -157,5 +209,7 @@ experiments, not real-user collection.
 - [SQLite `secure_delete` pragma](https://www.sqlite.org/pragma.html#pragma_secure_delete)
 - [`zeroize` crate documentation](https://docs.rs/zeroize/latest/zeroize/)
 - [Vault Transit key deletion API](https://developer.hashicorp.com/vault/api-docs/secret/transit)
+- [Vault snapshot restore procedure](https://developer.hashicorp.com/vault/docs/sysadmin/snapshots/restore)
+- [Vault replication requirements and Transit key replication](https://developer.hashicorp.com/vault/docs/enterprise/replication)
 - [YubiHSM 2 object capacity](https://docs.yubico.com/hardware/yubihsm-2/hsm-2-user-guide/hsm2-intro-core-concepts.html)
 - [YubiHSM 2 backup and restore](https://docs.yubico.com/hardware/yubihsm-2/hsm-2-user-guide/hsm2-backup-restore.html)
