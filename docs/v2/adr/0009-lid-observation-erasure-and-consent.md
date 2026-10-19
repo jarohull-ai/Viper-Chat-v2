@@ -139,6 +139,38 @@ experiments, not real-user collection.
 - Define and test retention durations and backup expiry before enabling
   collection. The previously discussed 90 days remains a proposal, not policy.
 
+## Retention decisions and local profile
+
+- **Observation payload:** propose a maximum retention of 90 days from
+  collection for an initial deployment, with earlier deletion on a valid
+  erasure request. This is not approved policy and does not enable collection.
+  The product owner/controller must approve the purpose, duration, and lawful
+  basis after privacy review; otherwise the limit remains unset and collection
+  stays off.
+- **Tombstone/archive:** retain the minimal tombstone and its checkpoint at
+  least as long as any Vault/etcd backup or snapshot capable of restoring the
+  corresponding key, plus the documented recovery window. If any such backup
+  has no bounded expiry, the tombstone cannot safely expire yet. Do not set
+  Object Lock Compliance retention until the maximum backup lifetime and
+  recovery window are known: Compliance retention cannot be shortened once
+  applied. Tombstones contain only a random opaque key handle, monotonic
+  sequence, protocol/state version, and signed event digest; omit user or
+  workspace IDs, content, LID, source-event links, and unnecessary timestamps.
+  Reassess whether the opaque key handle remains linkable data and whether
+  this archive duration is appropriate before enabling collection.
+- **Local-only candidate:** MinIO with object locking/versioning is the
+  proposed self-hosted WORM alternative to S3, not yet approved. The bucket
+  must be created with locking enabled; if replicated, both source and target
+  buckets must have object locking enabled and TLS must protect replication.
+  MinIO documents that replication decrypts on the source and transmits over
+  the network before the target re-encrypts; the replication path is therefore
+  inside the trusted boundary and must use authenticated TLS.
+  The MinIO archive must be outside the etcd/Vault backup rollback and
+  administrator domains (a second path on the same host is insufficient).
+  Run the full S3-compatible conformance suite against the exact MinIO version
+  and deployment topology; compatibility claims do not substitute for these
+  tests. Until it passes, local deployments keep collection disabled.
+
 ## Required Vault validation plan (not yet executed)
 
 The Vault dev server is only a disposable adapter-test target. It cannot prove
@@ -330,5 +362,7 @@ missing tombstone data; replay from S3 remains mandatory.
 - [etcd role-based access control](https://etcd.io/docs/v3.5/op-guide/authentication/rbac/)
 - [Amazon S3 Object Lock](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html)
 - [Configuring S3 Object Lock](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock-configure.html)
+- [MinIO Object Locking](https://min.io/docs/minio/linux/administration/object-management/object-retention.html)
+- [MinIO bucket replication requirements](https://min.io/docs/minio/linux/administration/bucket-replication/bucket-replication-requirements.html)
 - [YubiHSM 2 object capacity](https://docs.yubico.com/hardware/yubihsm-2/hsm-2-user-guide/hsm2-intro-core-concepts.html)
 - [YubiHSM 2 backup and restore](https://docs.yubico.com/hardware/yubihsm-2/hsm-2-user-guide/hsm2-backup-restore.html)
