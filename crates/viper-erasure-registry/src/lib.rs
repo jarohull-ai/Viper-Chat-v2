@@ -441,6 +441,7 @@ mod tests {
         state: Arc<Mutex<MockStoreState>>,
         order: Arc<Mutex<Vec<&'static str>>>,
         fail_commit_once: bool,
+        fail_health: bool,
     }
 
     #[derive(Default)]
@@ -463,12 +464,19 @@ mod tests {
                 state: Arc::new(Mutex::new(state)),
                 order: Arc::new(Mutex::new(Vec::new())),
                 fail_commit_once: false,
+                fail_health: false,
             }
         }
 
         fn with_commit_failure(key: &KeyHandle) -> Self {
             let mut store = Self::active(key);
             store.fail_commit_once = true;
+            store
+        }
+
+        fn with_health_failure(key: &KeyHandle) -> Self {
+            let mut store = Self::active(key);
+            store.fail_health = true;
             store
         }
 
@@ -598,6 +606,9 @@ mod tests {
 
         fn health(&self) -> RegistryFuture<'_, Result<StoreHealth, BackendError>> {
             Box::pin(async move {
+                if self.fail_health {
+                    return Err(BackendError);
+                }
                 let state = self.state.lock().expect("mock state lock");
                 Ok(StoreHealth {
                     committed_sequence: state.committed_sequence,
@@ -613,6 +624,7 @@ mod tests {
         state: Arc<Mutex<MockArchiveState>>,
         order: Arc<Mutex<Vec<&'static str>>>,
         failures_remaining: Arc<Mutex<usize>>,
+        fail_checkpoint: bool,
     }
 
     #[derive(Default)]
@@ -628,6 +640,7 @@ mod tests {
                 state: Arc::new(Mutex::new(MockArchiveState::default())),
                 order: Arc::new(Mutex::new(Vec::new())),
                 failures_remaining: Arc::new(Mutex::new(0)),
+                fail_checkpoint: false,
             }
         }
 
@@ -636,6 +649,7 @@ mod tests {
                 state: Arc::new(Mutex::new(MockArchiveState::default())),
                 order: Arc::new(Mutex::new(Vec::new())),
                 failures_remaining: Arc::new(Mutex::new(1)),
+                fail_checkpoint: false,
             }
         }
 
@@ -644,7 +658,14 @@ mod tests {
                 state: Arc::new(Mutex::new(MockArchiveState::default())),
                 order,
                 failures_remaining: Arc::new(Mutex::new(0)),
+                fail_checkpoint: false,
             }
+        }
+
+        fn with_checkpoint_failure() -> Self {
+            let mut archive = Self::new();
+            archive.fail_checkpoint = true;
+            archive
         }
 
         fn count(&self) -> usize {
@@ -694,6 +715,9 @@ mod tests {
 
         fn checkpoint(&self) -> RegistryFuture<'_, Result<ArchiveCheckpoint, BackendError>> {
             Box::pin(async move {
+                if self.fail_checkpoint {
+                    return Err(BackendError);
+                }
                 let state = self.state.lock().expect("mock archive lock");
                 Ok(ArchiveCheckpoint {
                     sequence: state.sequence,
@@ -861,5 +885,33 @@ mod tests {
         );
         assert_eq!(store.snapshot().0, KeyState::DeletionPending);
         assert_eq!(store.snapshot().2, 1);
+    }
+
+    #[tokio::test]
+    async fn store_health_failure_keeps_registry_unready() {
+        let (_, key) = ids();
+        let store = MockStore::with_health_failure(&key);
+        let archive = MockArchive::new();
+        let registry = ErasureRegistry::new("test-registry", store, archive, MockSigner);
+
+        assert_eq!(registry.readiness().await, Err(RegistryError::NotReady));
+        assert_eq!(
+            registry.authorize_decrypt(&key).await,
+            Err(RegistryError::NotReady)
+        );
+    }
+
+    #[tokio::test]
+    async fn archive_checkpoint_failure_keeps_registry_unready() {
+        let (_, key) = ids();
+        let store = MockStore::active(&key);
+        let archive = MockArchive::with_checkpoint_failure();
+        let registry = ErasureRegistry::new("test-registry", store, archive, MockSigner);
+
+        assert_eq!(registry.readiness().await, Err(RegistryError::NotReady));
+        assert_eq!(
+            registry.authorize_decrypt(&key).await,
+            Err(RegistryError::NotReady)
+        );
     }
 }
