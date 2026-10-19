@@ -1139,7 +1139,7 @@ mod tests {
         );
 
         let temp = tempfile::tempdir().unwrap();
-        fs::set_permissions(temp.path(), Permissions::from_mode(0o711)).unwrap();
+        fs::set_permissions(temp.path(), Permissions::from_mode(0o733)).unwrap();
         let runtime = temp.path().join("provider-runtime");
         let socket = runtime.join("seed.sock");
         let executable = temp.path().join("cross-uid-test-bin");
@@ -1165,6 +1165,7 @@ mod tests {
             socket.exists(),
             "cross-UID v2 provider did not create its socket"
         );
+        fs::set_permissions(temp.path(), Permissions::from_mode(0o711)).unwrap();
         rustix::fs::chown(
             &runtime,
             Some(rustix::process::Uid::from_raw(0)),
