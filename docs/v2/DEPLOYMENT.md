@@ -55,6 +55,14 @@ or merge these cases into the trusted reference corpus. LID thresholds remain
 unset until a larger, independently reviewed evaluation has been run with the
 pinned model and corpus; no threshold alone may approve an action.
 
+The current `semantic::evaluate_lid` API is diagnostic-only. It returns the
+raw LID value, neighbor count, caller-supplied model bundle SHA-256, verified
+corpus version/manifest SHA-256, and `Uncalibrated` status. It does not choose
+an action, feed the provider verdict, persist prompts/embeddings, or transmit
+telemetry. A validly shaped digest is not proof that a model was independently
+verified; production callers must construct provenance from the verified
+local assets. No model has yet been frozen or approved for production use.
+
 `viper-server` is a Linux executable and HTTP API bootstrap, not yet a complete
 production deployment. It only binds to `127.0.0.1`; there is no remote bind
 option, TLS termination, authentication layer, or tool-execution endpoint.

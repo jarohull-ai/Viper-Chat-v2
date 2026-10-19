@@ -68,6 +68,13 @@ defects and its license requires a separate commercial grant.
     policy; do not encode thresholds until a larger, independently reviewed
     evaluation demonstrates stable class separation with the pinned model,
     corpus, and neighbor count. LID alone must never approve an action.
+11. Until calibration is accepted, expose `evaluate_lid` only as a diagnostic
+    observation. It returns the raw geometric estimate, neighbor count, model
+    bundle digest, corpus version/manifest digest, and the fixed
+    `Uncalibrated` status. It has no threshold, recommendation, verdict,
+    persistence, or telemetry-export behavior; it is not connected to the
+    provider decision path. Never collect raw user prompts or embeddings as a
+    side effect.
 
 ## Input contract
 
@@ -156,6 +163,9 @@ suite passes.
   checked in for reproducibility. It is not calibration proof; independent
   review and broader non-synthetic evaluation are still required before
   evaluator policy is enabled.
+- `semantic::evaluate_lid` is a diagnostic-only observation API. It validates
+  provenance syntax and returns the raw LID plus model/corpus identity with
+  `Uncalibrated`; it cannot produce a decision or persist interaction data.
 - Existing IPC v2 clients remain compatible, but cannot use semantic mode.
 - A real-provider, distinct-UID end-to-end test remains required before the
   slice is considered complete.

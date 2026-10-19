@@ -18,6 +18,40 @@ pub struct LidEstimate {
     pub neighbors_used: usize,
 }
 
+/// Observation state for LID before empirical calibration.
+///
+/// This intentionally has no verdict-like variants. It cannot authorize, veto, or escalate an
+/// action; consumers must treat the numeric value as diagnostic telemetry only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LidObservationStatus {
+    /// Model/corpus evidence has not been calibrated against an approved real-data holdout.
+    Uncalibrated,
+}
+
+/// Pinned identities that must accompany every diagnostic LID observation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LidProvenance {
+    /// Stable model identifier, including an upstream revision where applicable.
+    pub model_id: String,
+    /// SHA-256 fingerprint of the exact model bundle used to create the vectors.
+    pub model_bundle_sha256: String,
+    /// Version of the verified reference corpus.
+    pub corpus_version: String,
+    /// SHA-256 of the exact verified corpus manifest bytes.
+    pub corpus_manifest_sha256: String,
+}
+
+/// Diagnostic-only evaluator result; it contains no policy recommendation or verdict.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LidObservation {
+    /// Raw geometric estimate and neighbor count.
+    pub estimate: LidEstimate,
+    /// The model/corpus identity supplied by the provider-side caller.
+    pub provenance: LidProvenance,
+    /// Explicit marker that no threshold calibration has been applied.
+    pub status: LidObservationStatus,
+}
+
 /// Invalid or insufficient evidence for a local intrinsic dimensionality estimate.
 #[derive(Debug, Clone, Copy, Error, PartialEq, Eq)]
 pub enum SemanticGeometryError {
@@ -30,6 +64,52 @@ pub enum SemanticGeometryError {
     /// The nearest-neighbor distances are degenerate, so an estimate is not trustworthy.
     #[error("nearest-neighbor distances are degenerate")]
     DegenerateDistances,
+    /// Required model/corpus provenance is missing or malformed.
+    #[error("semantic evidence provenance is invalid")]
+    InvalidProvenance,
+}
+
+/// Computes a diagnostic LID observation and binds it to model/corpus identities.
+///
+/// This function deliberately performs no thresholding, verdict mapping, persistence, or
+/// telemetry export. The caller must provide identities for the verified embedder and corpus
+/// that produced the supplied vectors. Until a separately approved calibration exists, the
+/// result is always marked [`LidObservationStatus::Uncalibrated`].
+///
+/// # Errors
+///
+/// Returns the same geometry errors as [`estimate_lid`], or `InvalidProvenance` when an
+/// identity is empty, oversized, contains control characters, or has a malformed SHA-256.
+pub fn evaluate_lid(
+    query: &[f32],
+    reference_vectors: &[Vec<f32>],
+    neighbors: usize,
+    provenance: LidProvenance,
+) -> Result<LidObservation, SemanticGeometryError> {
+    if provenance.model_id.trim().is_empty()
+        || provenance.model_id.len() > 128
+        || provenance.model_id.chars().any(char::is_control)
+        || provenance.corpus_version.trim().is_empty()
+        || provenance.corpus_version.len() > 64
+        || provenance.corpus_version.chars().any(char::is_control)
+        || !is_lower_sha256(&provenance.model_bundle_sha256)
+        || !is_lower_sha256(&provenance.corpus_manifest_sha256)
+    {
+        return Err(SemanticGeometryError::InvalidProvenance);
+    }
+    let estimate = estimate_lid(query, reference_vectors, neighbors)?;
+    Ok(LidObservation {
+        estimate,
+        provenance,
+        status: LidObservationStatus::Uncalibrated,
+    })
+}
+
+fn is_lower_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 /// Estimates local intrinsic dimensionality using the maximum-likelihood distance-ratio formula.
@@ -156,6 +236,42 @@ mod tests {
         assert_eq!(
             estimate_lid(&[0.0, 0.0], &[vec![1.0, 0.0], vec![1.0]], 2),
             Err(SemanticGeometryError::InvalidEmbedding)
+        );
+    }
+
+    #[test]
+    fn evaluator_returns_only_uncalibrated_observation_with_pinned_identities() {
+        let provenance = LidProvenance {
+            model_id: "test-model@revision-1".into(),
+            model_bundle_sha256: "a".repeat(64),
+            corpus_version: "v2".into(),
+            corpus_manifest_sha256: "b".repeat(64),
+        };
+        let observation = evaluate_lid(
+            &[0.0, 0.0],
+            &[vec![0.1, 0.0], vec![0.2, 0.0], vec![0.4, 0.0]],
+            3,
+            provenance.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(observation.estimate.neighbors_used, 3);
+        assert!(observation.estimate.value.is_finite());
+        assert_eq!(observation.provenance, provenance);
+        assert_eq!(observation.status, LidObservationStatus::Uncalibrated);
+    }
+
+    #[test]
+    fn evaluator_rejects_missing_or_malformed_provenance() {
+        let invalid = LidProvenance {
+            model_id: "model".into(),
+            model_bundle_sha256: "not-a-digest".into(),
+            corpus_version: "v2".into(),
+            corpus_manifest_sha256: "b".repeat(64),
+        };
+        assert_eq!(
+            evaluate_lid(&[0.0], &[vec![0.1], vec![0.2]], 2, invalid),
+            Err(SemanticGeometryError::InvalidProvenance)
         );
     }
 }
