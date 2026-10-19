@@ -17,8 +17,10 @@ jobs:
       - name: Verify workspace
         run: |
           cargo test --workspace --all-targets
+          cargo test -p viper-seed --features candle-embeddings
           cargo fmt --all -- --check
           cargo clippy --workspace --all-targets -- -D warnings
+          cargo clippy -p viper-seed --all-targets --features candle-embeddings -- -D warnings
       - name: Require real cross-UID peer-credential test
         run: |
           sudo env "PATH=$PATH" "CARGO_HOME=$HOME/.cargo" \

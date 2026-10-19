@@ -1,6 +1,9 @@
 //! Deterministic Tool Guard and fail-closed SEED composition.
 
 pub mod credential;
+/// Local, integrity-pinned Candle embedding backend (opt-in feature).
+#[cfg(feature = "candle-embeddings")]
+pub mod embedding;
 #[cfg(unix)]
 pub mod ipc;
 pub mod ipc_auth;

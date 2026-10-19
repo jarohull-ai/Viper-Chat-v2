@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+default = []
+candle-embeddings = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers"]
+
 [[bin]]
 name = "viper-seed-provider"
 path = "src/viper-seed-provider.rs"
@@ -15,6 +19,9 @@ path = "src/viper-seed-keygen.rs"
 
 [dependencies]
 clap.workspace = true
+candle-core = { workspace = true, optional = true }
+candle-nn = { workspace = true, optional = true }
+candle-transformers = { workspace = true, optional = true }
 ed25519-dalek.workspace = true
 getrandom.workspace = true
 hmac.workspace = true
@@ -24,6 +31,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+tokenizers = { workspace = true, optional = true }
 tokio.workspace = true
 viper-core = { path = "../viper-core" }
 viper-trajectory = { path = "../viper-trajectory" }
