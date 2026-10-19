@@ -1,6 +1,7 @@
 # ADR-0009: Erasable LID observations and collection gate
 
-- Status: proposed; requires product-owner and deployment-specific privacy review
+- Status: accepted for the Registry protocol contract; implementation and
+  deployment-specific privacy review remain pending
 - Date: 2026-10-19
 - Scope: future LID observations only; no provider integration or collection enabled
 
@@ -257,7 +258,7 @@ the S3 archive before readiness. The etcd/S3 profile is a concrete reference
 choice, but the backend must meet these invariants before implementation is
 accepted.
 
-## Tombstone authority and replication contract (proposed)
+## Tombstone authority and replication contract
 
 **Reference product choice:** use etcd as the quorum-backed Erasure Registry
 and Amazon S3 Object Lock as its independent WORM archive/checkpoint anchor.
@@ -276,6 +277,74 @@ transactions, while signed WORM copies detect attempted mutation or rollback.
 The etcd snapshot is not the anti-rollback anchor: restore can roll the
 keyspace/revision back, so restored instances must reconstruct and reconcile
 from the WORM archive before serving.
+
+### Registry v1 write contract
+
+The following is the protocol contract for the first implementation. It does
+not claim that either a mock or a single-node development deployment proves
+quorum or WORM behavior.
+
+- **Canonical event:** serialize the signed payload using JSON Canonicalization
+  Scheme (RFC 8785), UTF-8, with no duplicate object keys. Required fields are
+  `protocol` (`VIPER_ERASURE_TOMBSTONE_V1`), `registry_id`, monotonic
+  `sequence`, random `operation_id`, random opaque `key_handle`, `state`
+  (`pending` or `confirmed`), and `issued_at` in UTC RFC 3339 format. The
+  detached signature envelope carries `signature_algorithm` (`Ed25519`),
+  `signing_key_id`, and base64url-no-padding `signature`. Sign the canonical
+  payload bytes with domain separation (`VIPER-ERASURE-TOMBSTONE-V1\0` prefix).
+  Unknown protocol versions, fields required by this version, malformed or
+  non-canonical encodings, and unknown/revoked signing keys fail closed.
+- **Data minimization:** do not include `observation_id`, user/workspace IDs,
+  content, LID values, or source-event references. `key_handle` and timestamps
+  are pseudonymous/linkable metadata and remain sensitive. `operation_id` is a
+  random retry token, not a user- or observation-derived value. It identifies
+  one deletion workflow and is reused by its `pending` and `confirmed` events;
+  each state transition has its own sequence and signed bytes. A retry of the
+  same transition must reproduce its original bytes. Reusing an operation ID
+  for a different key handle or caller intent is a conflict.
+- **Idempotency and ordering:** the Registry first performs a linearizable etcd
+  compare-and-swap from `active` to `deletion_pending`, assigning one sequence
+  and durably closing that key's decrypt gate. This is not yet a successful
+  deletion acknowledgment. It then writes the signed event to S3 using a
+  deterministic object key derived from the sequence and payload digest, with
+  `If-None-Match: *` and the configured COMPLIANCE retention. On retry, an
+  existing object is accepted only after its exact bytes, digest, signature,
+  sequence, and retention metadata are verified; a mismatch is a fatal
+  integrity error. Finally, a quorum-backed etcd transaction records the
+  verified archive digest/version and advances the operation to `pending`.
+  Only then may the API acknowledge `pending`. Vault key destruction and
+  independent verification on every eligible failover copy follow; only then
+  may a separately signed `confirmed` event be appended and reported.
+- **Partial failure recovery:** a crash or archive outage after the initial
+  etcd transition leaves the key denied in `deletion_pending`; it must never
+  restore `active`. Recovery retries the same immutable S3 object, validates
+  it, and finalizes the same sequence. If etcd quorum is unavailable, the
+  operation cannot begin and no acknowledgment is returned. If S3 is
+  unavailable or invalid, the key remains denied and the operation is
+  unacknowledged/retryable. No code path may synthesize a replacement key or
+  silently discard a reserved sequence.
+- **Readiness and decrypt gate:** readiness is false at startup, after restore,
+  or after a detected partition until the instance has a linearizable etcd
+  quorum read, fetched and verified the freshest S3 checkpoint, replayed all
+  missing archive events, and resolved every incomplete Registry transition.
+  An observation decrypt additionally requires a fresh quorum-backed `active`
+  state for its handle; cached authorization is forbidden. Lack of quorum,
+  stale/unavailable archive, signature/sequence disagreement, or an unresolved
+  transition denies decrypt and keeps readiness false. A pending deletion is
+  never reported as complete.
+- **Archive checkpoint:** checkpoints bind `registry_id`, the highest
+  contiguous sequence, and the digest of the preceding checkpoint/event.
+  Gaps, duplicate sequence numbers with different payloads, rollback, and
+  equivocation are fatal to readiness. A checkpoint is not considered fresh
+  solely because it is the newest object returned by a listing; reconciliation
+  must compare it to the quorum state and verify the complete contiguous event
+  chain from the last trusted checkpoint.
+
+The client API exposes a deletion operation as `pending`, `confirmed`, or a
+retryable error; it never returns success merely because one backend accepted a
+write. Repeated calls with the same operation ID return the existing state
+after verification. Conflicting reuse of an operation ID is rejected and
+audited without exposing the key handle in logs.
 
 The WORM archive is a separate general-purpose S3 bucket created with
 Versioning and Object Lock enabled, in a separate security-administered AWS
