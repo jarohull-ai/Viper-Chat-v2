@@ -40,9 +40,11 @@ The v3 semantic request is a strict, size-bounded envelope containing:
 
 1. **Proposal:** the existing proposal ID, trace ID, actor, tool name,
    normalized arguments and trusted-orchestrator timestamp.
-2. **Task context:** task ID, objective, allowed workspace roots, allowed tool
-   families, explicit constraints, source kind, context version and SHA-256
-   digest. Free-form planner rationale/chain-of-thought is excluded. Because
+2. **Task/project context:** task ID and objective; project ID, normalized
+   workspace-root identifiers and a digest/version for the project manifest or
+   user-approved project summary; allowed tool families and explicit
+   constraints; source kind, context version and SHA-256 digest. Free-form
+   planner rationale/chain-of-thought is excluded. Because
    the current server has no authenticated human/session API, the context is
    marked `orchestrator_asserted_untrusted`; it may cause escalation or veto,
    but cannot expand capability or serve as proof of user authorization.
