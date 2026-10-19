@@ -137,27 +137,42 @@ experiments, not real-user collection.
   deletion. Failure to destroy keys or complete purge
   keeps collection disabled and raises an operational error.
 - Define and test retention durations and backup expiry before enabling
-  collection. The previously discussed 90 days remains a proposal, not policy.
+  collection. The profile below is an engineering proposal, not approved policy.
 
 ## Retention decisions and local profile
 
+- **Provisional engineering profile (selected for design/testing only):**
+  Vault/etcd backups and snapshots are retained for at most 90 days; a replica
+  may lag by at most 7 days; restore/failover must finish within 7 days; and a
+  provisional 16-day safety margin is added to round the proposed retention to
+  a **120-day minimum** WORM period (`90 + 7 + 7 + 16`). The 16-day margin is a
+  planning assumption, not a measured recovery bound. This is not an approved
+  business or privacy policy and does not enable collection. The 7-day
+  replication limit must be enforced and tested; if any backup copy lags
+  longer, or if recovery
+  takes longer, calculate the tombstone period from the actual maximum instead
+  and extend it. Any backup with unbounded retention means tombstones cannot
+  safely expire.
 - **Observation payload:** propose a maximum retention of 90 days from
-  collection for an initial deployment, with earlier deletion on a valid
-  erasure request. This is not approved policy and does not enable collection.
-  The product owner/controller must approve the purpose, duration, and lawful
-  basis after privacy review; otherwise the limit remains unset and collection
-  stays off.
-- **Tombstone/archive:** retain the minimal tombstone and its checkpoint at
-  least as long as any Vault/etcd backup or snapshot capable of restoring the
-  corresponding key, plus the documented recovery window. If any such backup
-  has no bounded expiry, the tombstone cannot safely expire yet. Do not set
-  Object Lock Compliance retention until the maximum backup lifetime and
-  recovery window are known: Compliance retention cannot be shortened once
-  applied. Tombstones contain only a random opaque key handle, monotonic
-  sequence, protocol/state version, and signed event digest; omit user or
-  workspace IDs, content, LID, source-event links, and unnecessary timestamps.
-  Reassess whether the opaque key handle remains linkable data and whether
-  this archive duration is appropriate before enabling collection.
+  collection, with earlier key destruction on an accepted erasure request.
+  This is likewise a proposal, not approved policy. The product
+  owner/controller must approve the purpose, duration, and lawful basis after
+  privacy review; until then collection stays off.
+- **Tombstone/archive:** retain the minimal tombstone and its checkpoint for
+  at least the computed interval above, then expire it only after confirming
+  no corresponding pre-deletion backup is restorable. Do not set Object Lock
+  Compliance retention until backup, replication, and restore maxima are
+  approved: Compliance retention cannot be shortened once applied. Tombstones
+  contain only a random opaque key handle, monotonic sequence, protocol/state
+  version, and signed event digest; omit user/workspace IDs, content, LID,
+  source-event links, and unnecessary timestamps. Reassess whether the opaque
+  handle remains linkable data and whether the duration is appropriate before
+  collection.
+- **Change control:** if a future deployment lengthens backup retention,
+  replication lag, or restore windows, the tombstone expiry must be recalculated
+  before that configuration is activated. Never shorten an existing locked
+  tombstone's retention or claim it is safe to expire based only on the nominal
+  backup policy; verify every replica, archive copy, and recovery path.
 - **Local-only candidate:** MinIO with object locking/versioning is the
   proposed self-hosted WORM alternative to S3, not yet approved. The bucket
   must be created with locking enabled; if replicated, both source and target
