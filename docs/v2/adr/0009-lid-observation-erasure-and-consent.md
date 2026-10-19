@@ -200,30 +200,64 @@ idempotent terminal result; (b) partition the Registry quorum and verify no
 delete is acknowledged as complete and all decrypts fail closed; (c) restore an
 old Registry snapshot and verify the external checkpoint detects rollback; and
 (d) attempt promotion of a Vault replica missing the latest tombstone and
-verify it is quarantined before it can serve any request. The concrete
-consensus store and WORM/checkpoint product remain deployment choices; the
-backend must meet these invariants before implementation is accepted.
+verify it is quarantined before it can serve any request. Also test that
+recovery after quorum returns replays every S3 tombstone without losing
+unrelated active records, and that an S3 outage blocks decrypts and cannot
+produce a false `confirmed` result. In a disposable AWS account, verify the
+runtime role cannot delete/shorten a COMPLIANCE-locked object version, duplicate
+sequence/object IDs are rejected, and restore of an older etcd snapshot replays
+the S3 archive before readiness. The etcd/S3 profile is a concrete reference
+choice, but the backend must meet these invariants before implementation is
+accepted.
 
 ## Tombstone authority and replication contract (proposed)
 
-The authoritative tombstones live in a dedicated append-only Erasure Registry,
-separate from Vault storage, Vault snapshots, and the observation database.
-This is a service/consensus-backed store, not a local file or a second SQLite
-file on the same host. Each tombstone contains only a random opaque Vault key
-handle, a monotonically increasing sequence, a state (`pending` or `confirmed`),
-and the minimum operation metadata needed to reconcile deletion. It contains
-no user/workspace ID, prompt, LID value, or source-event reference. The random
-handle may still be linkable to ciphertext in old backups, so access and
-retention of the registry itself must be controlled.
+**Reference product choice:** use etcd as the quorum-backed Erasure Registry
+and Amazon S3 Object Lock as its independent WORM archive/checkpoint anchor.
+This is a proposed deployment profile, not an implementation or a claim that
+the products alone provide the required guarantees. It introduces an AWS
+dependency; deployments requiring fully local/host-sovereign operation must
+keep collection disabled until an alternative WORM backend passes the same
+conformance suite.
+
+The logical registry is a dedicated service over a three- or five-member etcd
+cluster, separate from Vault storage and the observation database. Registry
+events use monotonically increasing IDs and append-only create semantics;
+application clients cannot access etcd directly. Since etcd RBAC is not itself
+a create-only event-log guarantee, the Registry API enforces compare-and-create
+transactions, while signed WORM copies detect attempted mutation or rollback.
+The etcd snapshot is not the anti-rollback anchor: restore can roll the
+keyspace/revision back, so restored instances must reconstruct and reconcile
+from the WORM archive before serving.
+
+The WORM archive is a separate general-purpose S3 bucket created with
+Versioning and Object Lock enabled, in a separate security-administered AWS
+account. Store a signed, sequenced tombstone event (or bounded ordered batch)
+as a unique object version with **COMPLIANCE** retention. The runtime role may
+create/read objects but cannot delete object versions, change retention, or
+disable the archive. Retention must cover the longest-lived Vault/etcd snapshot
+and backup plus the restore/recovery window; if backups have no bounded
+expiry, the tombstone archive must remain available for that lifetime. The
+archive stores only random opaque Vault-key handles, sequence and minimal
+reconciliation metadata—never user/workspace IDs, prompts, LID values, or
+source-event references. The opaque handle may still be linkable to encrypted
+rows in old backups and must be treated as sensitive pseudonymous metadata.
+
+S3 Object Lock protects object versions; a delete marker or a newer version
+does not remove the old locked version. Compliance retention is intentionally
+irreversible until expiry, so retention and data-minimization policy for these
+minimal tombstones must be explicitly approved. S3 provides WORM behavior, not
+an application-level append API; unique object names, signatures, sequence
+checks, IAM restrictions, and duplicate detection are enforced by the Registry.
 
 The Registry is authoritative for whether a key may be used. It must:
 
 - commit tombstone appends to a quorum spanning every failover-eligible failure
   domain before acknowledging a deletion request;
-- publish signed, monotonically numbered checkpoints to an independently
-  administered immutable/WORM anchor outside both Vault and Registry backup
-  rollback domains; after restore, verify anchor freshness and replay every
-  later tombstone before readiness;
+- publish signed, monotonically numbered tombstone events/checkpoints to the
+  Object-Lock archive outside both Vault and etcd snapshot rollback domains;
+  after restore, verify archive freshness and replay every later tombstone
+  before readiness;
 - replicate the tombstone stream synchronously (or with an equivalent quorum
   guarantee) to every failover-eligible site. A site that is offline or behind
   is removed from the failover/read path until it has caught up;
@@ -231,24 +265,45 @@ The Registry is authoritative for whether a key may be used. It must:
   deletion state cannot be established. Operators cannot force readiness by
   acknowledging a stale snapshot.
 
-Deletion protocol: transition the record to `deletion_pending` and deny all
-application decrypts; append the tombstone to Registry quorum and anchor its
-checkpoint; delete the named Transit key in the Vault primary; wait for
+Deletion has two externally visible stages: `pending` (access denied, purge in
+progress) and `confirmed` (all eligible copies verified absent). The Registry
+first closes the per-record decrypt gate and drains in-flight operations, then
+durably appends the signed tombstone to S3 Object Lock and commits the matching
+event to etcd quorum. Only after both durable writes may it acknowledge the
+request as `pending`; a crash after the S3 write is recovered by replaying the
+archive before readiness. If the WORM write fails, do not acknowledge the
+request, keep observation decrypts fail-closed, and return a retryable error.
+Then delete the named Transit key in the Vault primary; wait for
 Vault's consistency mechanism and verify the key is absent on every
 failover-eligible cluster; then mark the tombstone `confirmed`. If any step is
 uncertain, keep the record inaccessible and deletion pending, alert, and retry.
-Do not report erasure complete until all eligible Vault copies are confirmed
-absent. Direct Vault access is restricted to the adapter identity and audited;
-the application must check Registry state before every decrypt. Vault
+Application access is denied immediately after the durable pending tombstone;
+physical key removal is asynchronous. Do not report erasure complete until all
+eligible Vault copies are confirmed absent. Direct Vault access is restricted
+to the adapter identity and audited; every decrypt is serialized through the
+Registry authorization path and may not use a cached `active` result. Vault
 replication is eventually consistent and may serve stale reads, so a successful
-primary delete alone is not sufficient evidence.
+primary delete alone is not sufficient evidence. If quorum or the WORM archive
+is unavailable, fail closed for observation decrypts and leave deletion
+unacknowledged/pending; never silently roll back to an `active` state.
 
 On startup, restore, or promotion, the adapter must obtain the freshest signed
 Registry checkpoint and reconcile tombstones before accepting decrypt requests.
-If the Registry/anchor is unavailable, stale, or inconsistent, readiness stays
-false. If this deployment cannot provide the stated quorum, anchor, and
-fail-closed routing, it must not enable collection or use Vault replicas for
-this key domain.
+If etcd quorum or the S3 archive is unavailable, stale, or inconsistent,
+readiness stays false. If this deployment cannot provide the stated quorum,
+anchor, and fail-closed routing, it must not enable collection or use Vault
+replicas for this key domain.
+
+**Quorum outage recovery:** during a partition without etcd quorum, no
+tombstone write is acknowledged and all observation decrypts fail closed. When
+quorum returns, the Registry compares the latest etcd sequence with the
+highest signed S3 sequence, replays missing archive events idempotently, checks
+that active non-erased records still have their corresponding Vault keys, and
+only then restores readiness. A test must demonstrate that unrelated active
+records remain decryptable after recovery while erased records remain
+permanently unavailable. etcd's snapshot revision bump can prevent revision
+numbers from appearing to go backward to watchers, but it does not restore
+missing tombstone data; replay from S3 remains mandatory.
 
 ## Consequences and limitations
 
@@ -271,5 +326,9 @@ this key domain.
 - [Vault snapshot restore procedure](https://developer.hashicorp.com/vault/docs/sysadmin/snapshots/restore)
 - [Vault replication requirements and Transit key replication](https://developer.hashicorp.com/vault/docs/enterprise/replication)
 - [Vault replication consistency and stale-read behavior](https://developer.hashicorp.com/vault/docs/enterprise/consistency)
+- [etcd disaster recovery and snapshot restore](https://etcd.io/docs/v3.7/op-guide/recovery/)
+- [etcd role-based access control](https://etcd.io/docs/v3.5/op-guide/authentication/rbac/)
+- [Amazon S3 Object Lock](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html)
+- [Configuring S3 Object Lock](https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock-configure.html)
 - [YubiHSM 2 object capacity](https://docs.yubico.com/hardware/yubihsm-2/hsm-2-user-guide/hsm2-intro-core-concepts.html)
 - [YubiHSM 2 backup and restore](https://docs.yubico.com/hardware/yubihsm-2/hsm-2-user-guide/hsm2-backup-restore.html)
