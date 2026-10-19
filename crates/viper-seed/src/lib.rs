@@ -7,6 +7,8 @@ pub mod ipc_auth;
 #[cfg(unix)]
 pub mod ipc_v2;
 pub mod policy;
+/// Provider-side semantic geometry primitives.
+pub mod semantic;
 
 use regex::Regex;
 use std::collections::BTreeMap;
