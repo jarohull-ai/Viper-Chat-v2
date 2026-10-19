@@ -33,6 +33,26 @@ defects and its license requires a separate commercial grant.
 6. Keep the current provider in explicitly named policy-backed mode until the
    semantic engine, context provenance and IPC v3 conformance tests are all
    complete. Do not label it semantic before then.
+7. Use Candle as the native-Rust inference backend for the first embedding
+   slice. Keep it behind the opt-in `candle-embeddings` feature; inference is
+   CPU-only initially and accepts a local BERT bundle only. Runtime downloads,
+   implicit model fallback, and unpinned assets are forbidden. The loader
+   checks SHA-256 for config, tokenizer and weights before loading.
+8. A multilingual model is required for the initial Polish/English workload.
+   `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` is a
+   candidate (Hugging Face lists 50 languages and Apache-2.0), not yet the
+   production model. Freeze an exact upstream revision and bundle digests only
+   after the approved corpus evaluation; model/license provenance must ship
+   with that bundle.
+9. Keep each reference corpus release in a local `corpus/vN/` directory.
+   A strict `manifest.json` names every JSONL file and record count; every
+   JSONL file has a raw lowercase SHA-256 companion named `<file>.sha256`.
+   The loader rejects missing/mismatched hashes, symlinks, unknown fields,
+   unsafe paths, duplicate sample IDs, and size/count violations. It reports
+   both the manifest version and the digest of the exact manifest bytes.
+   Corpus files are reviewed and checked into Git; the loader has no network
+   client and never downloads data. New data means a new immutable version
+   directory, not mutation of an existing release.
 
 ## Input contract
 
@@ -109,6 +129,13 @@ suite passes.
   the semantic slice.
 - LID claims require a reproducible corpus/version and tests for malformed,
   empty, stale, and adversarial evidence.
+- Candle inference is optional so default builds and policy-backed provider
+  behavior do not acquire ML runtime dependencies. The model candidate is not
+  yet enabled by default and no model files are committed to the repository.
+- `corpus/v1` currently contains 16 synthetic, non-personal examples across
+  code, documentation, email and general prose. These are plumbing fixtures,
+  not a calibrated or production trust corpus; corpus quality and thresholds
+  require separate evaluation before semantic decisions are enabled.
 - Existing IPC v2 clients remain compatible, but cannot use semantic mode.
 - A real-provider, distinct-UID end-to-end test remains required before the
   slice is considered complete.

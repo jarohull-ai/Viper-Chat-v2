@@ -71,6 +71,10 @@ systemd starting template, and required CI cross-UID checks exist. The reference
 - Start with `SPECIFICATION_ADDENDUM_2.1.md` and ADR-0008: define trusted task-context provenance,
   semantic intent/context evaluation, provider-computed LID evidence, and IPC v3 without changing
   the strict IPC v2 contract. Build this native in `viper-seed`; do not reuse `seed-core` 0.1.6.
+- Implement the opt-in, local-only Candle embedding backend first; then freeze a multilingual model
+  bundle and versioned reference corpus by digest. Calibrate a versioned evaluator against published
+  decision vectors before mapping LID/context evidence to escalation or veto. No LID threshold may
+  approve a tool action by itself.
 - Keep the provider explicitly policy-backed until semantic inputs, decision vectors, IPC v3
   binding and failure behavior pass their acceptance tests.
 - Add `viper-sandbox`, Bubblewrap environment construction, process groups, timeouts, output limits,

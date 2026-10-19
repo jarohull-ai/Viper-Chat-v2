@@ -1,0 +1,4 @@
+{"id":"general-001","category":"general","text":"A clear task description explains the goal, constraints, and how completion will be checked."}
+{"id":"general-002","category":"general","text":"The local application should remain usable when the network connection is unavailable."}
+{"id":"general-003","category":"general","text":"The library returned an error because the supplied value was outside the supported range."}
+{"id":"general-004","category":"general","text":"A short summary helps a reviewer understand the reason for a proposed change."}

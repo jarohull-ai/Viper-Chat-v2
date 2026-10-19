@@ -1,5 +1,40 @@
 # viper-server deployment (Phase 2 bootstrap)
 
+## Local semantic reference corpus (Phase 3, not enabled in the provider)
+
+The checked-in `corpus/v1/` release is a small synthetic fixture set. It
+contains only non-personal text and is not a calibrated policy dataset. Do not
+put customer messages, credentials, secrets, or private source code in it.
+Corpus loading is local-only; no runtime network access or download path exists.
+
+To create a new release, add a new `corpus/vN/` directory rather than editing
+an already released version. Add UTF-8 JSONL files (one strict sample object
+per line: `id`, `category`, `text`), update `manifest.json` with the new version,
+date, filenames and exact record counts, then write one lowercase SHA-256
+digest plus newline to each `<filename>.sha256` sidecar. For example:
+
+```sh
+sha256sum corpus/v2/code.jsonl | cut -d ' ' -f 1 > corpus/v2/code.jsonl.sha256
+```
+
+Repeat for every JSONL file listed in the manifest. The loader enforces file,
+sample, path and symlink bounds and rejects the release if any sidecar is
+missing or mismatched. Verify a release and its LID plumbing offline with:
+
+```sh
+cargo test -p viper-seed --features candle-embeddings \
+  corpus::tests::loads_local_version_and_reports_manifest_digest
+cargo test -p viper-seed --features candle-embeddings \
+  --test corpus_lid
+```
+
+The corpus integration test uses a deterministic fixture embedder to test
+loader-to-LID composition; it does not claim to calibrate a real model or map
+LID to a verdict. The manifest version and raw-manifest SHA-256 are available
+from the loaded `Corpus` and must be recorded alongside any later semantic
+assessment. Never replace a corpus release in place: publish a new version and
+retain the old directory for reproducibility.
+
 `viper-server` is a Linux executable and HTTP API bootstrap, not yet a complete
 production deployment. It only binds to `127.0.0.1`; there is no remote bind
 option, TLS termination, authentication layer, or tool-execution endpoint.

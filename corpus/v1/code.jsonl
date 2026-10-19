@@ -1,0 +1,4 @@
+{"id":"code-001","category":"code","text":"fn add(left: i32, right: i32) -> i32 { left + right }"}
+{"id":"code-002","category":"code","text":"A unit test should cover normal input, boundary values, and invalid state."}
+{"id":"code-003","category":"code","text":"Use a bounded retry loop with exponential backoff and a maximum elapsed time."}
+{"id":"code-004","category":"code","text":"The parser rejects unknown fields and returns a typed validation error."}

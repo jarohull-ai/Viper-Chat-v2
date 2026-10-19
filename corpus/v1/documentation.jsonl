@@ -1,0 +1,4 @@
+{"id":"documentation-001","category":"documentation","text":"This service stores an append-only audit trail in a local SQLite database."}
+{"id":"documentation-002","category":"documentation","text":"Configuration values are validated at startup; invalid settings stop the process."}
+{"id":"documentation-003","category":"documentation","text":"The deployment guide describes required files, ownership, permissions, and recovery."}
+{"id":"documentation-004","category":"documentation","text":"A protocol version change requires an ADR, compatibility notes, and conformance tests."}

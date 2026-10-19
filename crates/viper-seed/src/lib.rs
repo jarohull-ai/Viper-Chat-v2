@@ -1,5 +1,7 @@
 //! Deterministic Tool Guard and fail-closed SEED composition.
 
+/// Offline, integrity-checked semantic reference corpus loader.
+pub mod corpus;
 pub mod credential;
 /// Local, integrity-pinned Candle embedding backend (opt-in feature).
 #[cfg(feature = "candle-embeddings")]
