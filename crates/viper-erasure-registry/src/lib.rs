@@ -1037,6 +1037,80 @@ mod tests {
 
     struct MockSigner;
 
+    /// Test-only deterministic payload encoding. Production adapters must use RFC 8785 JCS.
+    struct RealEd25519Signer(ed25519_dalek::SigningKey);
+
+    impl RealEd25519Signer {
+        fn new() -> Self {
+            Self(ed25519_dalek::SigningKey::from_bytes(&[0x42; 32]))
+        }
+
+        fn payload_bytes(payload: &TombstonePayload) -> Vec<u8> {
+            format!(
+                "{}|{}|{}|{}|{}|{}|{:?}|{}",
+                payload.protocol,
+                payload.registry_id,
+                payload.sequence,
+                payload.operation_id.as_str(),
+                payload.key_handle.as_str(),
+                hex_digest(&payload.prev_digest),
+                payload.state,
+                payload.issued_at
+            )
+            .into_bytes()
+        }
+
+        fn signed_message(canonical_payload: &[u8]) -> Vec<u8> {
+            let mut message = b"VIPER-ERASURE-TOMBSTONE-V2\0".to_vec();
+            message.extend_from_slice(canonical_payload);
+            message
+        }
+    }
+
+    impl TombstoneSigner for RealEd25519Signer {
+        fn sign(&self, payload: &TombstonePayload) -> Result<SignedTombstone, BackendError> {
+            use ed25519_dalek::Signer as _;
+
+            let canonical_payload = Self::payload_bytes(payload);
+            let signature = self
+                .0
+                .sign(&Self::signed_message(&canonical_payload))
+                .to_bytes()
+                .to_vec();
+            let mut object_bytes = canonical_payload.clone();
+            object_bytes.extend_from_slice(&signature);
+            Ok(SignedTombstone {
+                digest: event_digest(&canonical_payload, &signature),
+                canonical_payload,
+                signature,
+                object_bytes,
+            })
+        }
+
+        fn verify(&self, event: &ArchivedTombstone) -> Result<(), BackendError> {
+            if event.signed.canonical_payload != Self::payload_bytes(&event.payload)
+                || event.signed.digest
+                    != event_digest(&event.signed.canonical_payload, &event.signed.signature)
+            {
+                return Err(BackendError);
+            }
+            let signature_bytes: [u8; 64] = event
+                .signed
+                .signature
+                .as_slice()
+                .try_into()
+                .map_err(|_| BackendError)?;
+            let signature = ed25519_dalek::Signature::from_bytes(&signature_bytes);
+            self.0
+                .verifying_key()
+                .verify_strict(
+                    &Self::signed_message(&event.signed.canonical_payload),
+                    &signature,
+                )
+                .map_err(|_| BackendError)
+        }
+    }
+
     impl TombstoneSigner for MockSigner {
         fn sign(&self, payload: &TombstonePayload) -> Result<SignedTombstone, BackendError> {
             let canonical_payload = format!(
@@ -1219,6 +1293,51 @@ mod tests {
         assert_eq!(
             registry.authorize_decrypt(&key_b).await,
             Err(RegistryError::KeyNotActive)
+        );
+    }
+
+    #[test]
+    fn real_ed25519_signature_binds_payload_and_verifies_chain_digest() {
+        let crypto = RealEd25519Signer::new();
+        let payload = TombstonePayload {
+            protocol: "VIPER_ERASURE_TOMBSTONE_V2".to_owned(),
+            registry_id: "test-registry".to_owned(),
+            sequence: 1,
+            operation_id: OperationId::new("op-signed").unwrap(),
+            key_handle: KeyHandle::new("key-signed").unwrap(),
+            prev_digest: [0; 32],
+            state: TombstoneState::Pending,
+            issued_at: "2026-10-19T00:00:00Z".to_owned(),
+        };
+        let signed_event = crypto.sign(&payload).unwrap();
+        let archived = ArchivedTombstone {
+            payload: payload.clone(),
+            version_id: "unit-test-version-1".to_owned(),
+            signed: signed_event.clone(),
+        };
+        assert_eq!(crypto.verify(&archived), Ok(()));
+        assert_eq!(signed_event.signature.len(), 64);
+        assert_eq!(
+            signed_event.digest,
+            event_digest(&signed_event.canonical_payload, &signed_event.signature)
+        );
+
+        let mut tampered = archived;
+        tampered.payload.prev_digest[0] = 1;
+        assert_eq!(crypto.verify(&tampered), Err(BackendError));
+        let mut tampered_signature = signed_event;
+        tampered_signature.signature[0] ^= 1;
+        tampered_signature.digest = event_digest(
+            &tampered_signature.canonical_payload,
+            &tampered_signature.signature,
+        );
+        assert_eq!(
+            crypto.verify(&ArchivedTombstone {
+                payload,
+                version_id: "unit-test-version-1".to_owned(),
+                signed: tampered_signature,
+            }),
+            Err(BackendError)
         );
     }
 
