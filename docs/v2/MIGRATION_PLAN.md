@@ -48,10 +48,11 @@ Exit: all acceptance evidence above passes, and Phase 1 code is committed.
 - Provide a `viper-server` executable with a bounded CLI for DB path, loopback port, SEED IPC paths,
   expected provider UID, public trust bundle, and policy selection. Document current bootstrap
   limitations in `DEPLOYMENT.md`.
-- Add the production SEED provider process and first-run credential provisioner. Load the Ed25519
-  signing key only in the provider via a private OS credential descriptor; never fall back to `.env`.
-- Add a process-level integration test across `viper-server`, the SEED Unix-socket provider, and
-  `viper-db`; assert that the HTTP response follows committed ledger writes.
+- `viper-seed-provider` now serves SEED IPC v2 as a separate process, loads the Ed25519 key from
+  an inherited descriptor, checks peer UID, and independently re-evaluates Tool Guard evidence.
+  Its current deterministic policy-backed gate is not an independent semantic decider; no tool
+  execution exists. A first-run credential provisioner, systemd hardening, and process-level
+  integration test across `viper-server` + provider + `viper-db` remain required.
 - The server API must reject unknown request fields, enforce the 64 KiB body limit, use stable
   machine-readable errors, and expose no tool-execution capability in this phase.
 - Add `viper-sandbox`, Bubblewrap environment construction, process groups, timeouts, output limits,

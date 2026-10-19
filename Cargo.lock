@@ -1804,6 +1804,7 @@ dependencies = [
 name = "viper-seed"
 version = "2.0.0-alpha.1"
 dependencies = [
+ "clap",
  "ed25519-dalek",
  "getrandom",
  "hmac",

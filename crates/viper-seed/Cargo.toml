@@ -5,7 +5,12 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "viper-seed-provider"
+path = "src/viper-seed-provider.rs"
+
 [dependencies]
+clap.workspace = true
 ed25519-dalek.workspace = true
 getrandom.workspace = true
 hmac.workspace = true

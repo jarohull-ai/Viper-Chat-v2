@@ -8,7 +8,9 @@ Build and inspect its CLI:
 
 ```sh
 cargo build -p viper-server --bin viper-server
+cargo build -p viper-seed --bin viper-seed-provider
 cargo run -p viper-server -- --help
+cargo run -p viper-seed --bin viper-seed-provider -- --help
 ```
 
 Required startup inputs:
@@ -45,10 +47,26 @@ provider-owned runtime directory and narrow shared IPC group as specified in
 the protocol. `--allow-same-uid-development` exists only for local tests and
 must not be used in production.
 
-The production provider executable and first-run credential provisioner are
-not implemented yet. Until then, this executable cannot form a complete
-decision service: the configured socket must be served by an IPC v2 provider,
-and both peer-UID checks must pass. Provider lifecycle management, service
-units, restart policy, and key rotation belong to that follow-up slice. Do not
-expose this loopback API through a reverse proxy before the separate
-authenticated remote-API design exists.
+The provider process can be started with the inherited credential on file
+descriptor 3 (the descriptor must contain exactly the v2 key record defined in
+the protocol; never put the private key in argv or environment):
+
+```sh
+viper-seed-provider \
+  --runtime-dir /run/viper-seed \
+  --socket /run/viper-seed/seed.sock \
+  --client-uid 990 \
+  --credential-fd 3 \
+  3</run/credentials/viper-seed-signing-key
+```
+
+The runtime directory must already exist, be provider-owned, non-writable by
+group/other, and traversable by the dedicated IPC group. The provider will not
+remove stale socket paths at startup. It checks the received Tool Guard evidence
+against its own loaded policy before signing a decision. This initial provider
+is deliberately policy-backed: it is not an LLM, does not execute tools, and
+does not claim an independent semantic SEED decider. A separate first-run
+credential provisioner, systemd unit/hardening, rotation orchestration, and a
+broader provider decision engine remain follow-up work. Do not expose this
+loopback API through a reverse proxy before the separate authenticated
+remote-API design exists.
