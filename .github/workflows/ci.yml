@@ -26,4 +26,9 @@ jobs:
             cargo test -p viper-seed \
             ipc::tests::peer_cred_rejects_real_connection_from_another_uid \
             -- --exact --nocapture
+          sudo env "PATH=$PATH" "CARGO_HOME=$HOME/.cargo" \
+            "RUSTUP_HOME=$HOME/.rustup" CARGO_TARGET_DIR=target-cross-uid \
+            VIPER_REQUIRE_CROSS_UID=1 cargo test -p viper-seed \
+            ipc_v2::tests::client_rejects_real_v2_provider_with_wrong_uid \
+            -- --exact --nocapture
           sudo chown -R "$(id -u):$(id -g)" target-cross-uid

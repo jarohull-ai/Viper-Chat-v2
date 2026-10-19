@@ -531,16 +531,17 @@ mod tests {
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, header::CONTENT_TYPE};
     use std::fs::{self, Permissions};
+    use std::io::Cursor;
     use std::net::SocketAddr;
-    use std::os::unix::fs::PermissionsExt;
-    use std::time::Duration;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use tempfile::TempDir;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::UnixListener;
     use tower::ServiceExt;
     use viper_db::LedgerConfig;
-    use viper_seed::ipc::{SeedIpcClient, SeedIpcConfig};
-    use viper_seed::ipc_auth::{AuthKeyring, AuthProof, AuthTranscript, PeerRole, SessionRegistry};
+    use viper_seed::ipc_v2::{
+        ProviderKeyring, ProviderSigningKey, SeedIpcV2Client, SeedIpcV2Config, SeedIpcV2Provider,
+    };
     use viper_seed::policy::load_embedded;
     use viper_seed::{GuardLevel, SeedFailure};
 
@@ -594,150 +595,50 @@ mod tests {
             .unwrap()
     }
 
-    async fn read_frame(stream: &mut tokio::net::UnixStream) -> serde_json::Value {
-        let length = stream.read_u32().await.unwrap() as usize;
-        let mut bytes = vec![0; length];
-        stream.read_exact(&mut bytes).await.unwrap();
-        serde_json::from_slice(&bytes).unwrap()
-    }
-
-    async fn write_frame(stream: &mut tokio::net::UnixStream, value: &serde_json::Value) {
-        let bytes = serde_json::to_vec(value).unwrap();
-        stream
-            .write_u32(u32::try_from(bytes.len()).unwrap())
-            .await
-            .unwrap();
-        stream.write_all(&bytes).await.unwrap();
-    }
-
-    fn decode_hex_32(value: &str) -> Result<[u8; 32], ()> {
-        let bytes = value.as_bytes();
-        if bytes.len() != 64 {
-            return Err(());
-        }
-        let mut decoded = [0; 32];
-        for (index, pair) in bytes.chunks_exact(2).enumerate() {
-            let high = decode_hex_nibble(pair[0]).ok_or(())?;
-            let low = decode_hex_nibble(pair[1]).ok_or(())?;
-            decoded[index] = (high << 4) | low;
-        }
-        Ok(decoded)
-    }
-
-    fn decode_hex_nibble(byte: u8) -> Option<u8> {
-        match byte {
-            b'0'..=b'9' => Some(byte - b'0'),
-            b'a'..=b'f' => Some(byte - b'a' + 10),
-            _ => None,
-        }
-    }
-
-    fn encode_hex(bytes: &[u8]) -> String {
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        let mut encoded = String::with_capacity(bytes.len() * 2);
-        for byte in bytes {
-            encoded.push(char::from(HEX[usize::from(byte >> 4)]));
-            encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
-        }
-        encoded
-    }
-
-    async fn mock_seed_provider(listener: UnixListener) {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        let hello = read_frame(&mut stream).await;
-        let session_id = hello["session_id"].as_str().unwrap().to_owned();
-        let client_nonce = decode_hex_32(hello["client_nonce"].as_str().unwrap()).unwrap();
-        let provider_nonce = [0x22; 32];
-        write_frame(
-            &mut stream,
-            &serde_json::json!({
-                "protocol": "viper.seed.ipc.v1",
-                "kind": "server_challenge",
-                "session_id": &session_id,
-                "provider_nonce": encode_hex(&provider_nonce),
-            }),
-        )
-        .await;
-
-        let client_auth = read_frame(&mut stream).await;
-        let key_id = client_auth["key_id"].as_str().unwrap().to_owned();
-        let keys = AuthKeyring::bootstrap("integration-key", [0x41; 32]).unwrap();
-        let client_transcript = AuthTranscript {
-            key_id: key_id.clone(),
-            session_id: session_id.clone(),
-            client_nonce,
-            provider_nonce,
-            role: PeerRole::Client,
-        };
-        let client_proof = AuthProof {
-            key_id,
-            tag: decode_hex_32(client_auth["tag"].as_str().unwrap()).unwrap(),
-        };
-        let mut sessions = SessionRegistry::new(4).unwrap();
-        sessions
-            .accept_new(&keys, &client_transcript, &client_proof, 100, 30)
-            .unwrap();
-        let provider_proof = keys
-            .sign_new_session(AuthTranscript {
-                role: PeerRole::Provider,
-                ..client_transcript
-            })
-            .unwrap();
-        write_frame(
-            &mut stream,
-            &serde_json::json!({
-                "protocol": "viper.seed.ipc.v1",
-                "kind": "server_authentication",
-                "session_id": &session_id,
-                "key_id": provider_proof.proof.key_id,
-                "tag": encode_hex(&provider_proof.proof.tag),
-            }),
-        )
-        .await;
-
-        let decision_request = read_frame(&mut stream).await;
-        assert_eq!(decision_request["proposal_id"], "http-ipc-proposal");
-        assert_eq!(
-            decision_request["guard"]["policy_digest"]
-                .as_str()
-                .unwrap()
-                .len(),
-            64
-        );
-        write_frame(
-            &mut stream,
-            &serde_json::json!({
-                "protocol": "viper.seed.ipc.v1",
-                "kind": "decision_response",
-                "request_id": decision_request["request_id"],
-                "proposal_id": decision_request["proposal_id"],
-                "verdict": "APPROVED",
-                "reason_code": "INTEGRATION_TEST",
-                "explanation": "mock provider approved",
-            }),
-        )
-        .await;
-        stream.shutdown().await.unwrap();
-    }
-
     #[tokio::test]
-    async fn http_decision_uses_authenticated_ipc_and_commits_before_reply() {
+    async fn http_decision_uses_signed_v2_ipc_and_commits_before_reply() {
         let temp = tempfile::tempdir().unwrap();
         let runtime = temp.path().join("runtime");
         fs::create_dir(&runtime).unwrap();
-        fs::set_permissions(&runtime, Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(&runtime, Permissions::from_mode(0o750)).unwrap();
         let socket = runtime.join("seed.sock");
         let listener = UnixListener::bind(&socket).unwrap();
-        fs::set_permissions(&socket, Permissions::from_mode(0o600)).unwrap();
-        let provider = tokio::spawn(mock_seed_provider(listener));
-        let seed = SeedIpcClient::new(
-            SeedIpcConfig {
-                runtime_dir: runtime,
-                socket_path: socket,
-                connect_timeout: Duration::from_millis(250),
-                response_timeout: Duration::from_secs(1),
+        fs::set_permissions(&socket, Permissions::from_mode(0o660)).unwrap();
+        let provider_uid = fs::metadata(&runtime).unwrap().uid();
+        let private_record = format!(
+            "VIPER_SEED_SIGNING_KEY_V2\nintegration-key\n{}\n",
+            "41".repeat(32)
+        );
+        let signing_key =
+            ProviderSigningKey::load(Cursor::new(private_record.into_bytes())).unwrap();
+        let public_bundle = serde_json::json!({
+            "schema": "VIPER_SEED_PUBLIC_KEYS_V2",
+            "active": {
+                "key_id": signing_key.key_id(),
+                "public_key": signing_key.public_key_hex(),
             },
-            AuthKeyring::bootstrap("integration-key", [0x41; 32]).unwrap(),
+            "retiring": [],
+        })
+        .to_string();
+        let trusted_keys = ProviderKeyring::from_json_at(
+            &public_bundle,
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        )
+        .unwrap();
+        let provider = SeedIpcV2Provider::new(
+            provider_uid,
+            Duration::from_secs(1),
+            signing_key,
+            FixedSeed(Ok(VerdictStatus::Approved)),
+        );
+        let provider_task =
+            tokio::spawn(async move { provider.serve_one(&listener).await.unwrap() });
+        let seed = SeedIpcV2Client::new(
+            SeedIpcV2Config::with_defaults(runtime, socket, provider_uid),
+            trusted_keys,
         )
         .unwrap();
         let database = Arc::new(
@@ -767,7 +668,7 @@ mod tests {
         let created: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(created["decision"]["status"], "APPROVED");
         assert_eq!(created["committed_events"][1]["sequence"], 1);
-        provider.await.unwrap();
+        provider_task.await.unwrap();
 
         let response = app
             .oneshot(request("GET", "/v1/trajectory/verify", String::new()))

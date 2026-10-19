@@ -54,9 +54,10 @@ JSON envelope.
 
 ## Deliberate limits
 
-There is no production provider process or credential bootstrapper in this slice. Unit tests inject
-a deterministic `SeedGate`; a server integration test also uses the real authenticated IPC client
-against an in-test Unix-socket mock and verifies the durable ledger after the HTTP response. The
-production Unix-socket provider and inherited-credential setup remain Phase 2 work. Event reads
-currently verify the complete chain before serving data; optimize this only with an
-integrity-preserving design and benchmark evidence.
+There is no production provider executable or credential provisioner in this slice. Unit tests
+inject a deterministic `SeedGate`; a server integration test exercises IPC v2 client and provider
+services over a real Unix socket and verifies the durable ledger after the HTTP response. That test
+runs both peers under one test UID and is not the production cross-UID acceptance test. The
+production provider process and inherited-key setup remain Phase 2 work. Event reads currently
+verify the complete chain before serving data; optimize this only with an integrity-preserving
+design and benchmark evidence.

@@ -1,7 +1,7 @@
 # SEED IPC v1 wire contract
 
 - Protocol: `viper.seed.ipc.v1`
-- Status: Phase 1 implementation slice
+- Status: deprecated; retained for compatibility tests only. New production code must use v2.
 - Transport: Unix stream socket
 - Framing: unsigned 32-bit big-endian byte length followed by exactly one UTF-8 JSON value
 - Maximum frame: 65,536 bytes

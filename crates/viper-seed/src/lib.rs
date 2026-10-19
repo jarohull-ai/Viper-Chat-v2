@@ -4,6 +4,8 @@ pub mod credential;
 #[cfg(unix)]
 pub mod ipc;
 pub mod ipc_auth;
+#[cfg(unix)]
+pub mod ipc_v2;
 pub mod policy;
 
 use regex::Regex;

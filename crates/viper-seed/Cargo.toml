@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+ed25519-dalek.workspace = true
 getrandom.workspace = true
 hmac.workspace = true
 regex.workspace = true

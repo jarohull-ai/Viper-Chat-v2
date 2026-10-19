@@ -1,15 +1,14 @@
 //! Command-line entry point for the loopback-only Viper API.
 
 use clap::{Parser, ValueEnum};
-use std::fs::File;
+use rustix::process::geteuid;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 use viper_db::{LedgerConfig, TrajectoryDb};
 use viper_seed::GuardLevel;
-use viper_seed::credential::load_keyring;
-use viper_seed::ipc::{SeedIpcClient, SeedIpcConfig};
+use viper_seed::ipc_v2::{ProviderKeyring, SeedIpcV2Client, SeedIpcV2Config};
 use viper_seed::policy::{load_embedded, load_file};
 use viper_server::{ServerState, bind_loopback, router};
 
@@ -32,9 +31,17 @@ struct Args {
     #[arg(long)]
     seed_socket: PathBuf,
 
-    /// Inherited descriptor for the strict `VIPER_SEED_KEY_V1` credential record (must be >= 3).
+    /// Expected provider's distinct Linux UID.
     #[arg(long)]
-    seed_credential_fd: u32,
+    seed_provider_uid: u32,
+
+    /// Trusted, administrator-provisioned Ed25519 public-key bundle for the SEED provider.
+    #[arg(long)]
+    seed_provider_keyring: PathBuf,
+
+    /// Allow same-UID IPC for local development only; never use in production.
+    #[arg(long, default_value_t = false)]
+    allow_same_uid_development: bool,
 
     /// Optional versioned Tool Guard policy YAML. Uses the embedded policy when omitted.
     #[arg(long)]
@@ -74,21 +81,20 @@ async fn main() -> ExitCode {
 }
 
 async fn run(args: Args) -> Result<(), &'static str> {
-    if args.seed_credential_fd < 3 {
-        return Err("credential descriptor must be >= 3");
+    if args.seed_provider_uid == geteuid().as_raw() && !args.allow_same_uid_development {
+        return Err("server and provider must use distinct UIDs");
     }
-
-    let credential = File::open(format!("/proc/self/fd/{}", args.seed_credential_fd))
-        .map_err(|_| "could not open inherited credential descriptor")?;
-    let keyring = load_keyring(credential).map_err(|_| "invalid SEED credential record")?;
-    let seed_config = SeedIpcConfig {
+    let keyring = ProviderKeyring::load_file(&args.seed_provider_keyring)
+        .map_err(|_| "invalid SEED provider public-key bundle")?;
+    let seed_config = SeedIpcV2Config {
         runtime_dir: args.seed_runtime_dir,
         socket_path: args.seed_socket,
+        expected_provider_uid: args.seed_provider_uid,
         connect_timeout: Duration::from_millis(250),
         response_timeout: Duration::from_secs(1),
     };
-    let seed =
-        SeedIpcClient::new(seed_config, keyring).map_err(|_| "invalid SEED IPC configuration")?;
+    let seed = SeedIpcV2Client::new(seed_config, keyring)
+        .map_err(|_| "invalid SEED IPC v2 configuration")?;
 
     let level = args.guard_level.into();
     let guard = match args.policy {

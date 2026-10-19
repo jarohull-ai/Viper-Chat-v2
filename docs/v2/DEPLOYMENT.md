@@ -15,41 +15,40 @@ Required startup inputs:
 
 - `--db PATH`: SQLite trajectory ledger.
 - `--seed-runtime-dir PATH` and `--seed-socket PATH`: the private runtime
-  directory and socket expected by [SEED IPC v1](protocols/SEED_IPC_V1.md).
-- `--seed-credential-fd N`: an inherited descriptor (N >= 3) containing the
-  strict `VIPER_SEED_KEY_V1` record. This is the shared symmetric IPC HMAC key,
-  not a model/API credential. Because IPC v1 uses HMAC in both directions, the
-  server and SEED provider both need the same key record; each process must
-  receive it through a trusted service-manager credential handoff. The server
-  does not read `.env` or accept a key on the command line.
+  directory and socket expected by [SEED IPC v2](protocols/SEED_IPC_V2.md).
+- `--seed-provider-uid UID`: the distinct Linux UID expected for the provider.
+- `--seed-provider-keyring PATH`: administrator-provisioned Ed25519 public
+  trust bundle. It is public, but integrity-sensitive and must not be writable
+  by group or other users.
 - Optional `--policy PATH` and `--guard-level strict|balanced|off` select a
   validated Tool Guard policy and sensitivity level. The embedded versioned
   policy is used when `--policy` is omitted.
 - Optional `--port PORT` selects the loopback HTTP port (default 3000; `0`
   requests an ephemeral port).
 
-Example argument shape (the credential descriptor must be securely inherited
-from the service manager; this snippet intentionally does not provision it):
+Example argument shape:
 
 ```sh
 viper-server \
   --db /var/lib/viper/trajectory.sqlite3 \
   --seed-runtime-dir /run/viper-seed \
   --seed-socket /run/viper-seed/seed.sock \
-  --seed-credential-fd 3 \
+  --seed-provider-uid 991 \
+  --seed-provider-keyring /etc/viper/seed-provider-keys.json \
   --port 3000
 ```
 
-The current HMAC-v1 trust model means a compromised server process can use its
-keyring to forge provider authentication. If the desired boundary is that only
-the SEED provider receives private key material, IPC must move to a versioned
-asymmetric-authentication design before production use; do not imply that the
-current shared-HMAC descriptor achieves provider-only custody.
+Only the provider receives its Ed25519 signing key through an inherited
+`VIPER_SEED_SIGNING_KEY_V2` credential descriptor. `viper-server` receives the
+public key bundle only. Run the two services as separate UIDs and configure the
+provider-owned runtime directory and narrow shared IPC group as specified in
+the protocol. `--allow-same-uid-development` exists only for local tests and
+must not be used in production.
 
-The production `viper-seed` provider process and first-run credential
-provisioner are not implemented yet. Until then, this executable cannot form a
-complete decision service: the configured socket must be served by a matching
-authenticated provider, and both peers must satisfy the IPC ownership checks.
-Provider lifecycle management, service units, restart policy, and credential
-rotation belong to that follow-up slice. Do not expose this loopback API through
-a reverse proxy before the separate authenticated remote-API design exists.
+The production provider executable and first-run credential provisioner are
+not implemented yet. Until then, this executable cannot form a complete
+decision service: the configured socket must be served by an IPC v2 provider,
+and both peer-UID checks must pass. Provider lifecycle management, service
+units, restart policy, and key rotation belong to that follow-up slice. Do not
+expose this loopback API through a reverse proxy before the separate
+authenticated remote-API design exists.

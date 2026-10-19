@@ -1,10 +1,13 @@
 # ADR-0007: Provision SEED IPC credentials outside the application
 
-- Status: accepted
+- Status: superseded by ADR-0008
 - Date: 2026-10-19
 - Specification: `VIPER-SPEC-2.0`
 
 ## Context
+
+> Historical decision: this ADR described the Phase 1 symmetric-HMAC transport. It is retained to
+> explain the implementation history; ADR-0008 replaces its shared-secret delivery model.
 
 `AuthKeyring` protects key bytes in process memory, but does not define how the first key reaches
 the client and provider. A `.env` file or command-line argument can leak through backups, diagnostics,
