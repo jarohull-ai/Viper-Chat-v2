@@ -17,9 +17,11 @@ Required startup inputs:
 - `--seed-runtime-dir PATH` and `--seed-socket PATH`: the private runtime
   directory and socket expected by [SEED IPC v1](protocols/SEED_IPC_V1.md).
 - `--seed-credential-fd N`: an inherited descriptor (N >= 3) containing the
-  strict `VIPER_SEED_KEY_V1` record. The descriptor must be provisioned by a
-  trusted service manager/credential handoff; the server does not read `.env`
-  or accept a key on the command line.
+  strict `VIPER_SEED_KEY_V1` record. This is the shared symmetric IPC HMAC key,
+  not a model/API credential. Because IPC v1 uses HMAC in both directions, the
+  server and SEED provider both need the same key record; each process must
+  receive it through a trusted service-manager credential handoff. The server
+  does not read `.env` or accept a key on the command line.
 - Optional `--policy PATH` and `--guard-level strict|balanced|off` select a
   validated Tool Guard policy and sensitivity level. The embedded versioned
   policy is used when `--policy` is omitted.
@@ -37,6 +39,12 @@ viper-server \
   --seed-credential-fd 3 \
   --port 3000
 ```
+
+The current HMAC-v1 trust model means a compromised server process can use its
+keyring to forge provider authentication. If the desired boundary is that only
+the SEED provider receives private key material, IPC must move to a versioned
+asymmetric-authentication design before production use; do not imply that the
+current shared-HMAC descriptor achieves provider-only custody.
 
 The production `viper-seed` provider process and first-run credential
 provisioner are not implemented yet. Until then, this executable cannot form a

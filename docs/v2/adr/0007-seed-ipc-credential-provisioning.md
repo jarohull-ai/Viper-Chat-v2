@@ -14,9 +14,11 @@ available to unattended services and CI.
 ## Decision
 
 - Never load production IPC keys from `.env`, command-line arguments, protocol messages, or logs.
-- The application accepts key material only from a dedicated inherited descriptor (or an equivalent
-  OS service credential facility that exposes a private file/descriptor). `viper-seed` accepts one
-  strict record: `VIPER_SEED_KEY_V1\\n<key-id>\\n<64 lowercase hex chars>\\n`, capped at 256 bytes.
+- Both IPC peers accept the shared HMAC key only from a dedicated inherited descriptor (or an
+  equivalent OS service credential facility that exposes a private file/descriptor). Under the
+  current symmetric protocol this means both `viper-server` and the SEED provider hold the same
+  secret. `viper-seed` accepts one strict record:
+  `VIPER_SEED_KEY_V1\\n<key-id>\\n<64 lowercase hex chars>\\n`, capped at 256 bytes.
   The descriptor is read once through EOF, validated as exactly one key record, then closed by the
   caller; parsed key bytes enter `AuthKeyring` and are zeroized on replacement/drop. The credential
   manager must provide a finite file-like descriptor and close-on-exec behavior for unrelated
@@ -44,3 +46,6 @@ available to unattended services and CI.
 - Secret persistence, ownership, rotation coordination, and recovery must be tested against each
   supported service manager/OS. `zeroize` alone does not protect keys at rest or from a compromised
   process account.
+- Provider-only key custody is not achieved by HMAC v1: either peer holding the key can forge the
+  other's role. A future asymmetric protocol is required if the server must not hold provider
+  signing material.
