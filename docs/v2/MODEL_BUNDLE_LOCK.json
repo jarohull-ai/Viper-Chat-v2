@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "status": "pinned_candidate_observation_only",
+  "model_id": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+  "upstream_revision": "e8f8c211226b894fcb81acc59f3b34ba3efd5f42",
+  "license": "Apache-2.0",
+  "source": "https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+  "created_at": "2026-10-19",
+  "assets": [
+    {
+      "file": "config.json",
+      "size_bytes": 645,
+      "sha256": "6300193cb75e01cf80c96decef7187dfb33094d97cc1490b7ead6ff134476e4e"
+    },
+    {
+      "file": "tokenizer.json",
+      "size_bytes": 9081518,
+      "sha256": "2c3387be76557bd40970cec13153b3bbf80407865484b209e655e5e4729076b8"
+    },
+    {
+      "file": "model.safetensors",
+      "size_bytes": 470641600,
+      "sha256": "eaa086f0ffee582aeb45b36e34cdd1fe2d6de2bef61f8a559a1bbc9bd955917b"
+    }
+  ],
+  "bundle_identity": {
+    "sha256_file": "MODEL_BUNDLE_LOCK.json.sha256",
+    "meaning": "SHA-256 of these exact lock-file bytes; observations should use this as model_bundle_sha256.",
+    "inference_implementation": "viper-candle-bert-masked-mean-l2-v1"
+  },
+  "verification": {
+    "metadata_source": "Hugging Face model API at the pinned revision; config.json and tokenizer.json were streamed from the immutable revision and hashed locally; model.safetensors SHA-256 is the upstream LFS content digest.",
+    "weights_downloaded_locally": false,
+    "runtime_asset_hash_verification_required": true,
+    "production_approved": false,
+    "evaluation_approved": false
+  }
+}

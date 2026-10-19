@@ -61,7 +61,18 @@ corpus version/manifest SHA-256, and `Uncalibrated` status. It does not choose
 an action, feed the provider verdict, persist prompts/embeddings, or transmit
 telemetry. A validly shaped digest is not proof that a model was independently
 verified; production callers must construct provenance from the verified
-local assets. No model has yet been frozen or approved for production use.
+local assets. The exact candidate revision and three asset SHA-256 digests are
+pinned in [`MODEL_BUNDLE_LOCK.json`](MODEL_BUNDLE_LOCK.json), with the lock
+file's own digest in its `.sha256` sidecar. This is a reproducibility pin only:
+the 470 MB weights have not been downloaded by this checkout, and the model is
+not approved for production or calibration. The runtime loader must verify
+each asset before inference.
+
+Provider-side collection remains disabled. The consent, retention, deletion,
+and labeling gate is documented in
+[`LID_DATA_GOVERNANCE.md`](LID_DATA_GOVERNANCE.md); in particular, the current
+append-only trajectory makes deletion/retention unresolved, so no real-user
+observations may be collected.
 
 Migration `0003_lid_observations.sql` adds a bounded metadata table for future
 diagnostic collection. `LedgerAppender::record_lid_observation` requires an

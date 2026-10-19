@@ -39,11 +39,13 @@ defects and its license requires a separate commercial grant.
    implicit model fallback, and unpinned assets are forbidden. The loader
    checks SHA-256 for config, tokenizer and weights before loading.
 8. A multilingual model is required for the initial Polish/English workload.
-   `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` is a
-   candidate (Hugging Face lists 50 languages and Apache-2.0), not yet the
-   production model. Freeze an exact upstream revision and bundle digests only
-   after the approved corpus evaluation; model/license provenance must ship
-   with that bundle.
+   Pin `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` revision
+   `e8f8c211226b894fcb81acc59f3b34ba3efd5f42` and the Candle-loaded asset
+   digests in `MODEL_BUNDLE_LOCK.json` for reproducible experiments. This is a
+   frozen candidate, not a production approval: the large weights have not
+   been locally verified and corpus evaluation is not approved. Keep license
+   and source provenance with the lock; a production model requires separate
+   evaluation approval.
 9. Keep each reference corpus release in a local `corpus/vN/` directory.
    A strict `manifest.json` names every JSONL file and record count; every
    JSONL file has a raw lowercase SHA-256 companion named `<file>.sha256`.

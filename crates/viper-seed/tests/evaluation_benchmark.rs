@@ -49,6 +49,48 @@ struct Case {
     ground_truth: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelLock {
+    schema_version: u32,
+    status: String,
+    model_id: String,
+    upstream_revision: String,
+    license: String,
+    source: String,
+    created_at: String,
+    assets: Vec<ModelAsset>,
+    bundle_identity: BundleIdentity,
+    verification: ModelVerification,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelAsset {
+    file: String,
+    size_bytes: u64,
+    sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BundleIdentity {
+    sha256_file: String,
+    meaning: String,
+    inference_implementation: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(clippy::struct_excessive_bools)] // Mirrors the external lock-file verification schema.
+struct ModelVerification {
+    metadata_source: String,
+    weights_downloaded_locally: bool,
+    runtime_asset_hash_verification_required: bool,
+    production_approved: bool,
+    evaluation_approved: bool,
+}
+
 #[test]
 fn synthetic_benchmark_is_pinned_balanced_and_has_ground_truth() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../evaluation/semantic-v1");
@@ -135,4 +177,68 @@ fn synthetic_benchmark_is_pinned_balanced_and_has_ground_truth() {
         );
     }
     assert_eq!(injection_techniques.len(), 16);
+}
+
+#[test]
+fn model_bundle_lock_is_pinned_checksummed_and_not_production_approved() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/v2");
+    let lock_path = root.join("MODEL_BUNDLE_LOCK.json");
+    let lock_bytes = fs::read(&lock_path).unwrap();
+    let lock: ModelLock = serde_json::from_slice(&lock_bytes).unwrap();
+    let expected = fs::read_to_string(root.join(&lock.bundle_identity.sha256_file)).unwrap();
+    let digest = Sha256::digest(&lock_bytes);
+    let mut actual = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        write!(&mut actual, "{byte:02x}").unwrap();
+    }
+
+    assert_eq!(expected.trim(), actual);
+    assert_eq!(lock.schema_version, 1);
+    assert_eq!(lock.status, "pinned_candidate_observation_only");
+    assert_eq!(
+        lock.model_id,
+        "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    );
+    assert_eq!(lock.upstream_revision.len(), 40);
+    assert!(
+        lock.upstream_revision
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    );
+    assert_eq!(lock.license, "Apache-2.0");
+    assert!(lock.source.starts_with("https://huggingface.co/"));
+    assert_eq!(lock.created_at, "2026-10-19");
+    assert!(lock.assets.iter().any(|asset| asset.file == "config.json"));
+    assert!(
+        lock.assets
+            .iter()
+            .any(|asset| asset.file == "tokenizer.json")
+    );
+    assert!(
+        lock.assets
+            .iter()
+            .any(|asset| asset.file == "model.safetensors")
+    );
+    assert!(lock.assets.iter().all(|asset| {
+        asset.size_bytes > 0
+            && asset.sha256.len() == 64
+            && asset
+                .sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    }));
+    assert!(
+        lock.bundle_identity
+            .meaning
+            .contains("exact lock-file bytes")
+    );
+    assert_eq!(
+        lock.bundle_identity.inference_implementation,
+        "viper-candle-bert-masked-mean-l2-v1"
+    );
+    assert!(lock.verification.metadata_source.contains("Hugging Face"));
+    assert!(!lock.verification.weights_downloaded_locally);
+    assert!(lock.verification.runtime_asset_hash_verification_required);
+    assert!(!lock.verification.production_approved);
+    assert!(!lock.verification.evaluation_approved);
 }
