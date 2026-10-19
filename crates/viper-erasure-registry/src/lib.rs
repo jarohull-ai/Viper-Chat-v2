@@ -69,9 +69,40 @@ fn validate_token(value: &str) -> Result<(), ()> {
     Ok(())
 }
 
+fn event_digest(canonical_payload: &[u8], signature: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"VIPER-ERASURE-CHAIN-V2\0");
+    hasher.update(
+        u64::try_from(canonical_payload.len())
+            .unwrap_or(u64::MAX)
+            .to_be_bytes(),
+    );
+    hasher.update(canonical_payload);
+    hasher.update(
+        u64::try_from(signature.len())
+            .unwrap_or(u64::MAX)
+            .to_be_bytes(),
+    );
+    hasher.update(signature);
+    hasher.finalize().into()
+}
+
+#[cfg(test)]
+fn hex_digest(digest: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(64);
+    for byte in digest {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
 /// One immutable Registry event payload before signing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TombstonePayload {
+    /// Versioned event protocol identifier.
+    pub protocol: String,
     /// Registry namespace, configured outside user input.
     pub registry_id: String,
     /// Monotonic sequence reserved by the quorum store.
@@ -80,6 +111,8 @@ pub struct TombstonePayload {
     pub operation_id: OperationId,
     /// Opaque key handle; never a user-facing or observation identifier.
     pub key_handle: KeyHandle,
+    /// Digest of the immediately preceding immutable event.
+    pub prev_digest: [u8; 32],
     /// State transition recorded by this event.
     pub state: TombstoneState,
     /// Fixed UTC timestamp returned by the store reservation.
@@ -114,6 +147,8 @@ pub struct SignedTombstone {
 pub struct DeleteReservation {
     /// Fixed sequence assigned exactly once per operation.
     pub sequence: u64,
+    /// Previous committed event digest, captured atomically with sequence reservation.
+    pub prev_digest: [u8; 32],
     /// Fixed timestamp reused by every retry of this transition.
     pub issued_at: String,
 }
@@ -158,6 +193,28 @@ pub struct ArchiveCheckpoint {
     pub digest: [u8; 32],
 }
 
+/// A retrieved archive event with its decoded payload and exact signed bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchivedTombstone {
+    /// Decoded payload fields; the coordinator verifies them before applying.
+    pub payload: TombstonePayload,
+    /// Exact immutable archive object version from which this event was read.
+    pub version_id: String,
+    /// Exact immutable bytes used to verify the event digest.
+    pub signed: SignedTombstone,
+}
+
+/// One bounded archive replay response.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayPage {
+    /// Fixed archive watermark for this complete replay attempt.
+    pub through: ArchiveCheckpoint,
+    /// Ordered events after the requested anchor/cursor.
+    pub events: Vec<ArchivedTombstone>,
+    /// Resume cursor; `None` means the page reached `through`.
+    pub next_cursor: Option<u64>,
+}
+
 /// Quorum-backed state adapter. Implementations must use linearizable transactions and allow
 /// only one unresolved sequence reservation at a time; concurrent writers are serialized by
 /// compare-and-swap or an equivalent quorum primitive.
@@ -181,6 +238,12 @@ pub trait RegistryStore: Send + Sync {
     /// Lists all durable incomplete transitions for startup/retry reconciliation.
     fn pending_deletions(&self) -> RegistryFuture<'_, Result<Vec<PendingDeletion>, BackendError>>;
 
+    /// Applies a verified replay event using CAS against its predecessor digest.
+    fn apply_replayed_event<'a>(
+        &'a self,
+        event: &'a ArchivedTombstone,
+    ) -> RegistryFuture<'a, Result<(), BackendError>>;
+
     /// Reads fresh key state. A stale or non-quorum read must be an error.
     fn key_state<'a>(
         &'a self,
@@ -196,12 +259,21 @@ pub trait TombstoneArchive: Send + Sync {
     /// Creates the immutable object or verifies an identical object from an earlier retry.
     fn put_idempotent<'a>(
         &'a self,
+        payload: &'a TombstonePayload,
         event: &'a SignedTombstone,
         sequence: u64,
     ) -> RegistryFuture<'a, Result<ArchiveReceipt, BackendError>>;
 
     /// Reads the latest verified checkpoint; unavailable/stale state is an error.
     fn checkpoint(&self) -> RegistryFuture<'_, Result<ArchiveCheckpoint, BackendError>>;
+
+    /// Returns the contiguous event range after `after`, bounded by the fixed `through` head.
+    fn read_events(
+        &self,
+        after: ArchiveCheckpoint,
+        through: ArchiveCheckpoint,
+        cursor: Option<u64>,
+    ) -> RegistryFuture<'_, Result<ReplayPage, BackendError>>;
 }
 
 /// Deterministic signing adapter. Re-signing the same payload must yield identical bytes.
@@ -212,6 +284,13 @@ pub trait TombstoneSigner: Send + Sync {
     ///
     /// Returns an opaque backend error if signing or canonicalization fails.
     fn sign(&self, payload: &TombstonePayload) -> Result<SignedTombstone, BackendError>;
+
+    /// Verifies canonical form, signing-key trust, signature and event envelope.
+    ///
+    /// # Errors
+    ///
+    /// Returns an opaque backend error if any encoding, trust, signature, or envelope check fails.
+    fn verify(&self, event: &ArchivedTombstone) -> Result<(), BackendError>;
 }
 
 /// Key state observed from a fresh quorum read.
@@ -303,7 +382,7 @@ where
         if issued_at.is_empty() || issued_at.len() > 64 {
             return Err(RegistryError::InvalidIdentifier);
         }
-        self.reconcile_pending().await?;
+        self.reconcile().await?;
         self.ensure_ready().await?;
         let reservation = self
             .store
@@ -335,9 +414,114 @@ where
         Ok(reconciled)
     }
 
+    /// Reconciles interrupted writes and replays archive events missing from local state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError::NotReady`] for gaps, forks, altered payloads, invalid signatures,
+    /// or disagreement between the quorum and archive heads. Backend failures are fail-closed.
+    pub async fn reconcile(&self) -> Result<usize, RegistryError> {
+        let pending = self.reconcile_pending().await?;
+        let replayed = self.reconcile_archive().await?;
+        self.ensure_ready().await?;
+        Ok(pending + replayed)
+    }
+
+    async fn reconcile_archive(&self) -> Result<usize, RegistryError> {
+        let initial_health = self
+            .store
+            .health()
+            .await
+            .map_err(|_| RegistryError::NotReady)?;
+        let mut local = ArchiveCheckpoint {
+            sequence: initial_health.committed_sequence,
+            digest: initial_health.committed_digest,
+        };
+        let target = self
+            .archive
+            .checkpoint()
+            .await
+            .map_err(|_| RegistryError::NotReady)?;
+        if local.sequence > target.sequence
+            || (local.sequence == target.sequence && local.digest != target.digest)
+        {
+            return Err(RegistryError::NotReady);
+        }
+
+        let mut cursor = None;
+        let mut replayed = 0;
+        while local.sequence < target.sequence {
+            let page = self
+                .archive
+                .read_events(local, target, cursor)
+                .await
+                .map_err(|_| RegistryError::NotReady)?;
+            if page.through != target || page.events.is_empty() {
+                return Err(RegistryError::NotReady);
+            }
+            let page_start = local.sequence;
+            for archived in page.events {
+                let payload = &archived.payload;
+                let calculated_digest = event_digest(
+                    &archived.signed.canonical_payload,
+                    &archived.signed.signature,
+                );
+                if payload.registry_id != self.registry_id
+                    || payload.protocol != "VIPER_ERASURE_TOMBSTONE_V2"
+                    || payload.sequence != local.sequence.saturating_add(1)
+                    || payload.prev_digest != local.digest
+                    || archived.signed.digest != calculated_digest
+                    || payload.sequence > target.sequence
+                    || archived.version_id.is_empty()
+                {
+                    return Err(RegistryError::NotReady);
+                }
+                self.signer
+                    .verify(&archived)
+                    .map_err(|_| RegistryError::NotReady)?;
+                self.store
+                    .apply_replayed_event(&archived)
+                    .await
+                    .map_err(|_| RegistryError::NotReady)?;
+                local = ArchiveCheckpoint {
+                    sequence: payload.sequence,
+                    digest: archived.signed.digest,
+                };
+                replayed += 1;
+            }
+            if local.sequence == page_start {
+                return Err(RegistryError::NotReady);
+            }
+            if local.sequence < target.sequence && page.next_cursor.is_none() {
+                return Err(RegistryError::NotReady);
+            }
+            cursor = page.next_cursor;
+        }
+
+        let final_health = self
+            .store
+            .health()
+            .await
+            .map_err(|_| RegistryError::NotReady)?;
+        let final_archive = self
+            .archive
+            .checkpoint()
+            .await
+            .map_err(|_| RegistryError::NotReady)?;
+        if final_health.incomplete_transitions != 0
+            || final_health.committed_sequence != target.sequence
+            || final_health.committed_digest != target.digest
+            || final_archive.sequence != target.sequence
+            || final_archive.digest != target.digest
+        {
+            return Err(RegistryError::NotReady);
+        }
+        Ok(replayed)
+    }
+
     /// Reports ready only after the quorum state and verified archive checkpoint agree.
     ///
-    /// Call [`Self::reconcile_pending`] before this method during startup or restore.
+    /// Call [`Self::reconcile`] before this method during startup or restore.
     ///
     /// # Errors
     ///
@@ -354,10 +538,12 @@ where
         reservation: DeleteReservation,
     ) -> Result<DeleteResult, RegistryError> {
         let payload = TombstonePayload {
+            protocol: "VIPER_ERASURE_TOMBSTONE_V2".to_owned(),
             registry_id: self.registry_id.clone(),
             sequence: reservation.sequence,
             operation_id: operation_id.clone(),
             key_handle,
+            prev_digest: reservation.prev_digest,
             state: TombstoneState::Pending,
             issued_at: reservation.issued_at.clone(),
         };
@@ -365,13 +551,13 @@ where
             .signer
             .sign(&payload)
             .map_err(|_| RegistryError::Backend)?;
-        let calculated_digest: [u8; 32] = Sha256::digest(&signed.object_bytes).into();
+        let calculated_digest = event_digest(&signed.canonical_payload, &signed.signature);
         if calculated_digest != signed.digest {
             return Err(RegistryError::ReceiptMismatch);
         }
         let receipt = self
             .archive
-            .put_idempotent(&signed, reservation.sequence)
+            .put_idempotent(&payload, &signed, reservation.sequence)
             .await
             .map_err(|_| RegistryError::Backend)?;
         if receipt.digest != signed.digest || receipt.version_id.is_empty() {
@@ -433,7 +619,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use std::collections::{BTreeMap, HashMap};
+    use std::ops::Bound;
     use std::sync::{Arc, Mutex};
 
     #[derive(Clone)]
@@ -451,6 +638,7 @@ mod tests {
         operation_keys: HashMap<String, String>,
         committed_operations: HashMap<String, (DeleteReservation, ArchiveReceipt)>,
         pending: HashMap<String, PendingDeletion>,
+        applied: HashMap<u64, [u8; 32]>,
         committed_sequence: u64,
         committed_digest: [u8; 32],
         incomplete: usize,
@@ -458,8 +646,27 @@ mod tests {
 
     impl MockStore {
         fn active(key: &KeyHandle) -> Self {
+            Self::active_many(std::slice::from_ref(key))
+        }
+
+        fn active_many(keys: &[KeyHandle]) -> Self {
             let mut state = MockStoreState::default();
-            state.keys.insert(key.0.clone(), KeyState::Active);
+            state
+                .keys
+                .extend(keys.iter().map(|key| (key.0.clone(), KeyState::Active)));
+            Self {
+                state: Arc::new(Mutex::new(state)),
+                order: Arc::new(Mutex::new(Vec::new())),
+                fail_commit_once: false,
+                fail_health: false,
+            }
+        }
+
+        fn restored_from_genesis(keys: &[KeyHandle]) -> Self {
+            let mut state = MockStoreState::default();
+            state
+                .keys
+                .extend(keys.iter().map(|key| (key.0.clone(), KeyState::Active)));
             Self {
                 state: Arc::new(Mutex::new(state)),
                 order: Arc::new(Mutex::new(Vec::new())),
@@ -521,6 +728,7 @@ mod tests {
                 state.incomplete += 1;
                 let reservation = DeleteReservation {
                     sequence: state.committed_sequence + 1,
+                    prev_digest: state.committed_digest,
                     issued_at: issued_at.to_owned(),
                 };
                 state
@@ -564,6 +772,7 @@ mod tests {
                 }
                 if !state.reservations.contains_key(operation_id.as_str())
                     || reservation.sequence != state.committed_sequence + 1
+                    || reservation.prev_digest != state.committed_digest
                     || receipt.version_id.is_empty()
                 {
                     return Err(BackendError);
@@ -572,6 +781,7 @@ mod tests {
                 state.committed_digest = receipt.digest;
                 state.incomplete = state.incomplete.saturating_sub(1);
                 state.pending.remove(operation_id.as_str());
+                state.applied.insert(reservation.sequence, receipt.digest);
                 state.committed_operations.insert(
                     operation_id.as_str().to_owned(),
                     (reservation.clone(), receipt.clone()),
@@ -586,6 +796,39 @@ mod tests {
             Box::pin(async move {
                 let state = self.state.lock().expect("mock state lock");
                 Ok(state.pending.values().cloned().collect())
+            })
+        }
+
+        fn apply_replayed_event<'a>(
+            &'a self,
+            event: &'a ArchivedTombstone,
+        ) -> RegistryFuture<'a, Result<(), BackendError>> {
+            Box::pin(async move {
+                let mut state = self.state.lock().expect("mock state lock");
+                let sequence = event.payload.sequence;
+                if sequence <= state.committed_sequence {
+                    return if state.applied.get(&sequence) == Some(&event.signed.digest) {
+                        Ok(())
+                    } else {
+                        Err(BackendError)
+                    };
+                }
+                if sequence != state.committed_sequence + 1
+                    || event.payload.prev_digest != state.committed_digest
+                {
+                    return Err(BackendError);
+                }
+                let key_state = match event.payload.state {
+                    TombstoneState::Pending => KeyState::DeletionPending,
+                    TombstoneState::Confirmed => KeyState::Deleted,
+                };
+                state
+                    .keys
+                    .insert(event.payload.key_handle.0.clone(), key_state);
+                state.committed_sequence = sequence;
+                state.committed_digest = event.signed.digest;
+                state.applied.insert(sequence, event.signed.digest);
+                Ok(())
             })
         }
 
@@ -632,6 +875,7 @@ mod tests {
         sequence: u64,
         digest: [u8; 32],
         versions: HashMap<u64, ([u8; 32], String, Vec<u8>)>,
+        events: BTreeMap<u64, ArchivedTombstone>,
     }
 
     impl MockArchive {
@@ -671,11 +915,35 @@ mod tests {
         fn count(&self) -> usize {
             self.state.lock().expect("mock archive lock").versions.len()
         }
+
+        fn remove_event_keep_checkpoint(&self, sequence: u64) -> Option<ArchivedTombstone> {
+            self.state
+                .lock()
+                .expect("mock archive lock")
+                .events
+                .remove(&sequence)
+        }
+
+        fn restore_event(&self, event: ArchivedTombstone) {
+            self.state
+                .lock()
+                .expect("mock archive lock")
+                .events
+                .insert(event.payload.sequence, event);
+        }
+
+        fn tamper_predecessor(&self, sequence: u64) {
+            let mut state = self.state.lock().expect("mock archive lock");
+            if let Some(event) = state.events.get_mut(&sequence) {
+                event.payload.prev_digest[0] ^= 0xff;
+            }
+        }
     }
 
     impl TombstoneArchive for MockArchive {
         fn put_idempotent<'a>(
             &'a self,
+            payload: &'a TombstonePayload,
             event: &'a SignedTombstone,
             sequence: u64,
         ) -> RegistryFuture<'a, Result<ArchiveReceipt, BackendError>> {
@@ -688,7 +956,11 @@ mod tests {
                     return Err(BackendError);
                 }
                 if let Some((digest, version_id, bytes)) = state.versions.get(&sequence) {
-                    if *digest != event.digest || *bytes != event.object_bytes {
+                    if *digest != event.digest
+                        || *bytes != event.object_bytes
+                        || state.events.get(&sequence).map(|stored| &stored.payload)
+                            != Some(payload)
+                    {
                         return Err(BackendError);
                     }
                     return Ok(ArchiveReceipt {
@@ -706,6 +978,14 @@ mod tests {
                 );
                 state.sequence = sequence;
                 state.digest = event.digest;
+                state.events.insert(
+                    sequence,
+                    ArchivedTombstone {
+                        payload: payload.clone(),
+                        version_id: version_id.clone(),
+                        signed: event.clone(),
+                    },
+                );
                 Ok(ArchiveReceipt {
                     digest: event.digest,
                     version_id,
@@ -725,6 +1005,34 @@ mod tests {
                 })
             })
         }
+
+        fn read_events(
+            &self,
+            after: ArchiveCheckpoint,
+            through: ArchiveCheckpoint,
+            cursor: Option<u64>,
+        ) -> RegistryFuture<'_, Result<ReplayPage, BackendError>> {
+            Box::pin(async move {
+                let state = self.state.lock().expect("mock archive lock");
+                if state.sequence != through.sequence || state.digest != through.digest {
+                    return Err(BackendError);
+                }
+                let start = cursor.unwrap_or(after.sequence);
+                let events: Vec<_> = state
+                    .events
+                    .range((Bound::Excluded(start), Bound::Included(through.sequence)))
+                    .take(2)
+                    .map(|(_, event)| event.clone())
+                    .collect();
+                let last = events.last().map(|event| event.payload.sequence);
+                let next_cursor = last.filter(|sequence| *sequence < through.sequence);
+                Ok(ReplayPage {
+                    through,
+                    events,
+                    next_cursor,
+                })
+            })
+        }
     }
 
     struct MockSigner;
@@ -732,11 +1040,13 @@ mod tests {
     impl TombstoneSigner for MockSigner {
         fn sign(&self, payload: &TombstonePayload) -> Result<SignedTombstone, BackendError> {
             let canonical_payload = format!(
-                "{}|{}|{}|{}|{:?}|{}",
+                "{}|{}|{}|{}|{}|{}|{:?}|{}",
+                payload.protocol,
                 payload.registry_id,
                 payload.sequence,
                 payload.operation_id.as_str(),
                 payload.key_handle.as_str(),
+                hex_digest(&payload.prev_digest),
                 payload.state,
                 payload.issued_at
             )
@@ -744,13 +1054,22 @@ mod tests {
             let signature = vec![0x5a; 64];
             let mut object_bytes = canonical_payload.clone();
             object_bytes.extend_from_slice(&signature);
-            let digest = Sha256::digest(&object_bytes).into();
+            let digest = event_digest(&canonical_payload, &signature);
             Ok(SignedTombstone {
                 canonical_payload,
                 signature,
                 digest,
                 object_bytes,
             })
+        }
+
+        fn verify(&self, event: &ArchivedTombstone) -> Result<(), BackendError> {
+            let expected = self.sign(&event.payload)?;
+            if expected == event.signed {
+                Ok(())
+            } else {
+                Err(BackendError)
+            }
         }
     }
 
@@ -831,22 +1150,124 @@ mod tests {
         let archive = MockArchive::new();
         let event = MockSigner
             .sign(&TombstonePayload {
+                protocol: "VIPER_ERASURE_TOMBSTONE_V2".to_owned(),
                 registry_id: "test-registry".to_owned(),
                 sequence: 1,
                 operation_id: OperationId::new("op-test-001").unwrap(),
                 key_handle: KeyHandle::new("key-test-001").unwrap(),
+                prev_digest: [0; 32],
                 state: TombstoneState::Pending,
                 issued_at: "2026-10-19T00:00:00Z".to_owned(),
             })
             .unwrap();
-        let first = archive.put_idempotent(&event, 1).await.unwrap();
-        let second = archive.put_idempotent(&event, 1).await.unwrap();
+        let payload = TombstonePayload {
+            protocol: "VIPER_ERASURE_TOMBSTONE_V2".to_owned(),
+            registry_id: "test-registry".to_owned(),
+            sequence: 1,
+            operation_id: OperationId::new("op-test-001").unwrap(),
+            key_handle: KeyHandle::new("key-test-001").unwrap(),
+            prev_digest: [0; 32],
+            state: TombstoneState::Pending,
+            issued_at: "2026-10-19T00:00:00Z".to_owned(),
+        };
+        let first = archive.put_idempotent(&payload, &event, 1).await.unwrap();
+        let second = archive.put_idempotent(&payload, &event, 1).await.unwrap();
         assert_eq!(first, second);
         assert_eq!(archive.count(), 1);
 
         let mut changed = event;
         changed.object_bytes.push(1);
-        assert_eq!(archive.put_idempotent(&changed, 1).await, Err(BackendError));
+        assert_eq!(
+            archive.put_idempotent(&payload, &changed, 1).await,
+            Err(BackendError)
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_from_genesis_replays_chain_and_keeps_erased_handles_denied() {
+        let key_a = KeyHandle::new("key-a").unwrap();
+        let key_b = KeyHandle::new("key-b").unwrap();
+        let store = MockStore::active_many(&[key_a.clone(), key_b.clone()]);
+        let archive = MockArchive::new();
+        let writer = ErasureRegistry::new("test-registry", store, archive.clone(), MockSigner);
+        writer
+            .delete(
+                OperationId::new("op-a").unwrap(),
+                key_a.clone(),
+                "2026-10-19T00:00:00Z",
+            )
+            .await
+            .unwrap();
+        writer
+            .delete(
+                OperationId::new("op-b").unwrap(),
+                key_b.clone(),
+                "2026-10-19T00:01:00Z",
+            )
+            .await
+            .unwrap();
+
+        let restored = MockStore::restored_from_genesis(&[key_a.clone(), key_b.clone()]);
+        let registry = ErasureRegistry::new("test-registry", restored.clone(), archive, MockSigner);
+        assert_eq!(registry.reconcile().await.unwrap(), 2);
+        assert_eq!(restored.snapshot().1, 2);
+        assert_eq!(restored.snapshot().0, KeyState::DeletionPending);
+        assert_eq!(
+            registry.authorize_decrypt(&key_a).await,
+            Err(RegistryError::KeyNotActive)
+        );
+        assert_eq!(
+            registry.authorize_decrypt(&key_b).await,
+            Err(RegistryError::KeyNotActive)
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_event_fails_closed_then_replay_recovers_idempotently() {
+        let (operation, key) = ids();
+        let writer_store = MockStore::active(&key);
+        let archive = MockArchive::new();
+        let writer =
+            ErasureRegistry::new("test-registry", writer_store, archive.clone(), MockSigner);
+        writer
+            .delete(operation, key.clone(), "2026-10-19T00:00:00Z")
+            .await
+            .unwrap();
+        let missing = archive.remove_event_keep_checkpoint(1).unwrap();
+
+        let restored = MockStore::restored_from_genesis(std::slice::from_ref(&key));
+        let registry = ErasureRegistry::new(
+            "test-registry",
+            restored.clone(),
+            archive.clone(),
+            MockSigner,
+        );
+        assert_eq!(registry.reconcile().await, Err(RegistryError::NotReady));
+        assert_eq!(restored.snapshot().1, 0);
+        assert_eq!(registry.readiness().await, Err(RegistryError::NotReady));
+
+        archive.restore_event(missing);
+        assert_eq!(registry.reconcile().await.unwrap(), 1);
+        assert_eq!(registry.reconcile().await.unwrap(), 0);
+        assert_eq!(restored.snapshot().1, 1);
+    }
+
+    #[tokio::test]
+    async fn tampered_predecessor_is_rejected_before_replay_apply() {
+        let (operation, key) = ids();
+        let writer_store = MockStore::active(&key);
+        let archive = MockArchive::new();
+        ErasureRegistry::new("test-registry", writer_store, archive.clone(), MockSigner)
+            .delete(operation, key.clone(), "2026-10-19T00:00:00Z")
+            .await
+            .unwrap();
+        archive.tamper_predecessor(1);
+
+        let restored = MockStore::restored_from_genesis(std::slice::from_ref(&key));
+        let registry = ErasureRegistry::new("test-registry", restored.clone(), archive, MockSigner);
+        assert_eq!(registry.reconcile().await, Err(RegistryError::NotReady));
+        assert_eq!(restored.snapshot().1, 0);
+        assert_eq!(registry.readiness().await, Err(RegistryError::NotReady));
     }
 
     #[tokio::test]
