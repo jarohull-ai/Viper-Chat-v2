@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "benchmark_version": "semantic-v1",
+  "created_at": "2026-10-19",
+  "status": "synthetic_pilot_not_calibrated",
+  "files": [
+    {
+      "file": "cases.jsonl",
+      "sha256_sidecar": "cases.jsonl.sha256",
+      "samples": 64,
+      "labels": {
+        "in_distribution": 16,
+        "out_of_domain": 16,
+        "prompt_injection": 16,
+        "factual_error": 16
+      },
+      "splits": { "development": 48, "holdout": 16 }
+    }
+  ],
+  "ground_truth": "Each case includes a human-readable expected interpretation. Cases are authored synthetic examples, not observed user data.",
+  "sources": [
+    {
+      "id": "synthetic-cases",
+      "location": "authored-for-viper-semantic-v1",
+      "license": "Synthetic",
+      "use_note": "Prompts and candidate text are fictional and authored for this repository. No real conversations, personal data, credentials, or operational secrets are included."
+    },
+    {
+      "id": "rust-book",
+      "location": "https://github.com/rust-lang/book",
+      "license": "MIT OR Apache-2.0",
+      "use_note": "Ground-truth Rust language facts are paraphrased; no substantial text copied."
+    },
+    {
+      "id": "rust-std",
+      "location": "https://doc.rust-lang.org/std/",
+      "license": "MIT OR Apache-2.0",
+      "use_note": "Ground-truth standard-library facts are paraphrased from public API documentation."
+    },
+    {
+      "id": "viper-chat-v2",
+      "location": "../../docs/v2/ and ../../crates/",
+      "license": "LicenseRef-PolyForm-Noncommercial-1.0.0",
+      "use_note": "Ground-truth project facts refer to the checked-in specification and implementation."
+    }
+  ],
+  "limitations": [
+    "This pilot is deliberately too small to calibrate production thresholds.",
+    "Synthetic prompt-injection and factual-error cases do not represent the full adversarial distribution.",
+    "The holdout split must not be used to tune thresholds."
+  ]
+}

@@ -2,14 +2,20 @@
 
 ## Local semantic reference corpus (Phase 3, not enabled in the provider)
 
-The checked-in `corpus/v1/` release is a small synthetic fixture set. It
-contains only non-personal text and is not a calibrated policy dataset. Do not
-put customer messages, credentials, secrets, or private source code in it.
-Corpus loading is local-only; no runtime network access or download path exists.
+The checked-in `corpus/v1/` release is retained as a 16-sample synthetic
+plumbing fixture. `corpus/v2/` is a 100-sample reference release (25 each:
+code, documentation, synthetic email-like text, and general engineering
+prose). Its manifest maps samples to this repository, paraphrased Rust
+Book/standard-library concepts, or explicitly synthetic text. The Rust Book
+is dual-licensed MIT/Apache-2.0; see its
+[copyright notice](https://github.com/rust-lang/book/blob/main/COPYRIGHT).
+No substantial public-source text is copied. Neither release contains private
+messages, customer data, credentials, secrets, or private source outside this
+repository. Corpus loading is local-only; there is no runtime network access.
 
 To create a new release, add a new `corpus/vN/` directory rather than editing
 an already released version. Add UTF-8 JSONL files (one strict sample object
-per line: `id`, `category`, `text`), update `manifest.json` with the new version,
+per line: `id`, `category`, `text`, and a manifest-catalogued `source_ref`), update `manifest.json` with the new version,
 date, filenames and exact record counts, then write one lowercase SHA-256
 digest plus newline to each `<filename>.sha256` sidecar. For example:
 
@@ -23,9 +29,10 @@ missing or mismatched. Verify a release and its LID plumbing offline with:
 
 ```sh
 cargo test -p viper-seed --features candle-embeddings \
-  corpus::tests::loads_local_version_and_reports_manifest_digest
+  corpus_v2_has_diverse_tracked_provenance
 cargo test -p viper-seed --features candle-embeddings \
   --test corpus_lid
+cargo test -p viper-seed --test evaluation_benchmark
 ```
 
 The corpus integration test uses a deterministic fixture embedder to test
@@ -34,6 +41,15 @@ LID to a verdict. The manifest version and raw-manifest SHA-256 are available
 from the loaded `Corpus` and must be recorded alongside any later semantic
 assessment. Never replace a corpus release in place: publish a new version and
 retain the old directory for reproducibility.
+
+The separate `evaluation/semantic-v1/` benchmark has 64 synthetic cases,
+balanced across in-distribution answers, out-of-domain text, prompt injection,
+and factual errors. Each case has written ground truth; each label has 12
+development and 4 holdout cases. This is a pilot, not threshold calibration.
+Do not tune against the holdout or merge these cases into the trusted reference
+corpus. LID thresholds remain unset until a larger, independently reviewed
+benchmark has been run with the pinned model and corpus; no threshold alone
+may approve an action.
 
 `viper-server` is a Linux executable and HTTP API bootstrap, not yet a complete
 production deployment. It only binds to `127.0.0.1`; there is no remote bind

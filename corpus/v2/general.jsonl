@@ -1,0 +1,25 @@
+{"id":"general-v2-001","category":"general","text":"A reliable process records what it changed and how the result was verified.","source_ref":"synthetic-general"}
+{"id":"general-v2-002","category":"general","text":"A version number is useful only when its compatibility contract is documented.","source_ref":"synthetic-general"}
+{"id":"general-v2-003","category":"general","text":"An unavailable dependency should produce a clear error instead of silent success.","source_ref":"synthetic-general"}
+{"id":"general-v2-004","category":"general","text":"A reviewer needs enough context to reproduce a reported failure.","source_ref":"synthetic-general"}
+{"id":"general-v2-005","category":"general","text":"A small example can explain an interface more clearly than a long description.","source_ref":"synthetic-general"}
+{"id":"general-v2-006","category":"general","text":"Sensitive values should not appear in logs, command arguments, or screenshots.","source_ref":"synthetic-general"}
+{"id":"general-v2-007","category":"general","text":"A deadline makes a stalled request observable and bounded.","source_ref":"synthetic-general"}
+{"id":"general-v2-008","category":"general","text":"Separate data from instructions when processing untrusted messages.","source_ref":"synthetic-general"}
+{"id":"general-v2-009","category":"general","text":"A checksum detects accidental changes but does not establish who created a file.","source_ref":"synthetic-general"}
+{"id":"general-v2-010","category":"general","text":"A test fixture should be deterministic and independent of external services.","source_ref":"synthetic-general"}
+{"id":"general-v2-011","category":"general","text":"A safe default limits access until an explicit policy grants more capability.","source_ref":"synthetic-general"}
+{"id":"general-v2-012","category":"general","text":"A migration should preserve enough information to diagnose partial failure.","source_ref":"synthetic-general"}
+{"id":"general-v2-013","category":"general","text":"A stable identifier helps connect related records across system components.","source_ref":"synthetic-general"}
+{"id":"general-v2-014","category":"general","text":"An independent review can catch assumptions that implementation tests miss.","source_ref":"synthetic-general"}
+{"id":"general-v2-015","category":"general","text":"A network timeout should have a finite upper bound.","source_ref":"synthetic-general"}
+{"id":"general-v2-016","category":"general","text":"A reproducible release records both source revision and artifact digests.","source_ref":"synthetic-general"}
+{"id":"general-v2-017","category":"general","text":"A private key should be readable only by the process that needs it.","source_ref":"synthetic-general"}
+{"id":"general-v2-018","category":"general","text":"Human confirmation is meaningful only when the approved action is shown precisely.","source_ref":"synthetic-general"}
+{"id":"general-v2-019","category":"general","text":"A data set should document its scope, source, version, and known limitations.","source_ref":"synthetic-general"}
+{"id":"general-v2-020","category":"general","text":"A failed validation should stop the operation before it produces side effects.","source_ref":"synthetic-general"}
+{"id":"general-v2-021","category":"general","text":"A backup is useful when restoration has been tested, not merely when it exists.","source_ref":"synthetic-general"}
+{"id":"general-v2-022","category":"general","text":"A clear error should identify the failed check without exposing secret data.","source_ref":"synthetic-general"}
+{"id":"general-v2-023","category":"general","text":"An audit record should distinguish a proposal from an executed operation.","source_ref":"synthetic-general"}
+{"id":"general-v2-024","category":"general","text":"A rollout can be reversed more safely when changes are isolated and versioned.","source_ref":"synthetic-general"}
+{"id":"general-v2-025","category":"general","text":"A meaningful benchmark includes examples the system was not tuned against.","source_ref":"synthetic-general"}

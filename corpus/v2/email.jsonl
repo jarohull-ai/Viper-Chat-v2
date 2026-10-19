@@ -1,0 +1,25 @@
+{"id":"email-v2-001","category":"email","text":"Hello, I have reviewed the change and left two questions on the merge request.","source_ref":"synthetic-email"}
+{"id":"email-v2-002","category":"email","text":"Could you send the release notes before the planning meeting tomorrow?","source_ref":"synthetic-email"}
+{"id":"email-v2-003","category":"email","text":"Thanks for confirming the test environment is available this afternoon.","source_ref":"synthetic-email"}
+{"id":"email-v2-004","category":"email","text":"The deployment window moved to Friday; please update the project calendar.","source_ref":"synthetic-email"}
+{"id":"email-v2-005","category":"email","text":"I attached the anonymized error report for the team to review.","source_ref":"synthetic-email"}
+{"id":"email-v2-006","category":"email","text":"Please confirm whether the latest package passed the integration suite.","source_ref":"synthetic-email"}
+{"id":"email-v2-007","category":"email","text":"The documentation draft is ready for a final technical review.","source_ref":"synthetic-email"}
+{"id":"email-v2-008","category":"email","text":"I will be offline during maintenance but will check the status afterward.","source_ref":"synthetic-email"}
+{"id":"email-v2-009","category":"email","text":"Can we move the architecture discussion to the next project sync?","source_ref":"synthetic-email"}
+{"id":"email-v2-010","category":"email","text":"The issue is reproducible with the attached sanitized test case.","source_ref":"synthetic-email"}
+{"id":"email-v2-011","category":"email","text":"Please add the migration notes to the internal release checklist.","source_ref":"synthetic-email"}
+{"id":"email-v2-012","category":"email","text":"The review is complete; the remaining action is to update the changelog.","source_ref":"synthetic-email"}
+{"id":"email-v2-013","category":"email","text":"I cannot reproduce the timeout on the current development branch.","source_ref":"synthetic-email"}
+{"id":"email-v2-014","category":"email","text":"Could you share the expected behavior for this API error response?","source_ref":"synthetic-email"}
+{"id":"email-v2-015","category":"email","text":"The backup finished successfully, so the maintenance task can begin.","source_ref":"synthetic-email"}
+{"id":"email-v2-016","category":"email","text":"Thanks, I have recorded the decision and linked the relevant design note.","source_ref":"synthetic-email"}
+{"id":"email-v2-017","category":"email","text":"The test report is available in the project workspace under today's build.","source_ref":"synthetic-email"}
+{"id":"email-v2-018","category":"email","text":"Please review the proposed dependency update and its compatibility notes.","source_ref":"synthetic-email"}
+{"id":"email-v2-019","category":"email","text":"I will send a summary after the staging deployment finishes.","source_ref":"synthetic-email"}
+{"id":"email-v2-020","category":"email","text":"The meeting notes list the open questions and their assigned owners.","source_ref":"synthetic-email"}
+{"id":"email-v2-021","category":"email","text":"The new test covers the boundary case discussed in the review.","source_ref":"synthetic-email"}
+{"id":"email-v2-022","category":"email","text":"Could you verify the checksum before installing the release artifact?","source_ref":"synthetic-email"}
+{"id":"email-v2-023","category":"email","text":"I updated the runbook with the service restart and rollback steps.","source_ref":"synthetic-email"}
+{"id":"email-v2-024","category":"email","text":"The proposed change is small, but it affects the public protocol contract.","source_ref":"synthetic-email"}
+{"id":"email-v2-025","category":"email","text":"Please reply with a suitable time for the next review session.","source_ref":"synthetic-email"}

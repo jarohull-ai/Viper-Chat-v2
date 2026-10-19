@@ -69,3 +69,37 @@ fn verified_corpus_sample_produces_expected_lid_range() {
     );
     assert_eq!(estimate.neighbors_used, 3);
 }
+
+#[test]
+fn corpus_v2_has_diverse_tracked_provenance() {
+    use viper_seed::corpus::CorpusCategory;
+
+    let corpus_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/v2");
+    let corpus = CorpusLoader::new(corpus_path)
+        .load()
+        .expect("verified corpus v2");
+    assert_eq!(corpus.version(), "v2");
+    assert_eq!(corpus.samples().len(), 100);
+    assert_eq!(corpus.sources().len(), 6);
+    assert!(
+        corpus
+            .samples()
+            .iter()
+            .all(|sample| sample.source_ref.is_some())
+    );
+    for category in [
+        CorpusCategory::Code,
+        CorpusCategory::Documentation,
+        CorpusCategory::Email,
+        CorpusCategory::General,
+    ] {
+        assert_eq!(
+            corpus
+                .samples()
+                .iter()
+                .filter(|sample| sample.category == category)
+                .count(),
+            25
+        );
+    }
+}

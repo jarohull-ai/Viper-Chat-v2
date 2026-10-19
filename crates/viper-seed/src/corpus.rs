@@ -40,6 +40,9 @@ pub struct CorpusSample {
     pub category: CorpusCategory,
     /// Representative text; corpus sources must not contain secrets or personal data.
     pub text: String,
+    /// Stable key into the release manifest's provenance catalog.
+    #[serde(default)]
+    pub source_ref: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,6 +51,8 @@ struct Manifest {
     schema_version: u32,
     corpus_version: String,
     created_at: String,
+    #[serde(default)]
+    sources: Vec<CorpusSource>,
     files: Vec<ManifestFile>,
 }
 
@@ -58,12 +63,27 @@ struct ManifestFile {
     samples: usize,
 }
 
+/// Provenance record for a corpus source.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CorpusSource {
+    /// Stable source key referenced by samples.
+    pub id: String,
+    /// Local repository path or public source URL.
+    pub location: String,
+    /// SPDX expression or `Synthetic` for authored examples.
+    pub license: String,
+    /// Whether sample text is original, paraphrased, or locally derived.
+    pub use_note: String,
+}
+
 /// A fully verified, immutable-in-memory corpus release.
 #[derive(Debug, Clone)]
 pub struct Corpus {
     version: String,
     created_at: String,
     manifest_sha256: String,
+    sources: Vec<CorpusSource>,
     samples: Vec<CorpusSample>,
 }
 
@@ -84,6 +104,12 @@ impl Corpus {
     #[must_use]
     pub fn manifest_sha256(&self) -> &str {
         &self.manifest_sha256
+    }
+
+    /// Provenance catalog declared by the verified manifest.
+    #[must_use]
+    pub fn sources(&self) -> &[CorpusSource] {
+        &self.sources
     }
 
     /// Verified samples in manifest/file order.
@@ -119,6 +145,11 @@ impl CorpusLoader {
         let manifest: Manifest = serde_json::from_slice(&manifest_bytes)
             .map_err(|error| CorpusError::InvalidManifest(error.to_string()))?;
         validate_manifest(&manifest)?;
+        let source_ids = manifest
+            .sources
+            .iter()
+            .map(|source| source.id.as_str())
+            .collect::<HashSet<_>>();
 
         let mut samples = Vec::new();
         let mut sample_ids = HashSet::new();
@@ -151,6 +182,14 @@ impl CorpusLoader {
                 let sample: CorpusSample = serde_json::from_slice(line)
                     .map_err(|error| CorpusError::InvalidSample(error.to_string()))?;
                 validate_sample(&sample)?;
+                if !manifest.sources.is_empty()
+                    && sample
+                        .source_ref
+                        .as_deref()
+                        .is_none_or(|source| !source_ids.contains(source))
+                {
+                    return Err(CorpusError::UnknownSourceReference(sample.id));
+                }
                 if !sample_ids.insert(sample.id.clone()) {
                     return Err(CorpusError::DuplicateSampleId(sample.id));
                 }
@@ -176,6 +215,7 @@ impl CorpusLoader {
             version: manifest.corpus_version,
             created_at: manifest.created_at,
             manifest_sha256: sha256_hex(&manifest_bytes),
+            sources: manifest.sources,
             samples,
         })
     }
@@ -215,6 +255,9 @@ pub enum CorpusError {
     /// A sample identifier is repeated across the release.
     #[error("duplicate corpus sample ID: {0}")]
     DuplicateSampleId(String),
+    /// A sample references a source absent from its release manifest.
+    #[error("sample has unknown or missing source reference: {0}")]
+    UnknownSourceReference(String),
     /// Symlinks are not permitted in corpus roots or data files.
     #[error("symlinks are not allowed in a corpus release")]
     Symlink,
@@ -250,6 +293,21 @@ fn validate_manifest(manifest: &Manifest) -> Result<(), CorpusError> {
         return Err(CorpusError::InvalidManifest(
             "unsupported schema, version/date format, or file count".into(),
         ));
+    }
+    let mut source_ids = HashSet::new();
+    for source in &manifest.sources {
+        if source.id.is_empty()
+            || source.id.len() > 64
+            || source.location.is_empty()
+            || source.location.len() > 512
+            || source.license.is_empty()
+            || source.use_note.is_empty()
+            || !source_ids.insert(&source.id)
+        {
+            return Err(CorpusError::InvalidManifest(
+                "invalid or duplicate source provenance entry".into(),
+            ));
+        }
     }
     let mut names = HashSet::new();
     let mut declared_samples = 0_usize;

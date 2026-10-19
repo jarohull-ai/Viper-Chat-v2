@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "corpus_version": "v2",
+  "created_at": "2026-10-19",
+  "sources": [
+    { "id": "viper-code", "location": "../../crates/viper-*", "license": "LicenseRef-PolyForm-Noncommercial-1.0.0", "use_note": "Original short examples derived from this repository's Rust code; edited into standalone prose/snippets." },
+    { "id": "viper-docs", "location": "../../docs/v2/", "license": "LicenseRef-PolyForm-Noncommercial-1.0.0", "use_note": "Paraphrased from project-owned design and deployment documents." },
+    { "id": "rust-book", "location": "https://github.com/rust-lang/book", "license": "MIT OR Apache-2.0", "use_note": "Original paraphrases of Rust Book concepts; no substantial text copied." },
+    { "id": "rust-std", "location": "https://doc.rust-lang.org/std/", "license": "MIT OR Apache-2.0", "use_note": "Original short descriptions based on public standard-library API documentation." },
+    { "id": "synthetic-email", "location": "authored-for-viper-corpus-v2", "license": "Synthetic", "use_note": "Fictional operational email-like snippets; no real people, addresses, or private messages." },
+    { "id": "synthetic-general", "location": "authored-for-viper-corpus-v2", "license": "Synthetic", "use_note": "Original generic engineering prose." }
+  ],
+  "files": [
+    { "file": "code.jsonl", "samples": 25 },
+    { "file": "documentation.jsonl", "samples": 25 },
+    { "file": "email.jsonl", "samples": 25 },
+    { "file": "general.jsonl", "samples": 25 }
+  ]
+}

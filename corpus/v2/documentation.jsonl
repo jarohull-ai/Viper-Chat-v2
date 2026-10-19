@@ -1,0 +1,25 @@
+{"id":"docs-v2-001","category":"documentation","text":"The provider is policy-backed today and does not claim semantic decision capability.","source_ref":"viper-docs"}
+{"id":"docs-v2-002","category":"documentation","text":"IPC v3 is a distinct protocol and does not negotiate down to IPC v2.","source_ref":"viper-docs"}
+{"id":"docs-v2-003","category":"documentation","text":"Private signing material belongs to the provider process, not the HTTP server.","source_ref":"viper-docs"}
+{"id":"docs-v2-004","category":"documentation","text":"The network namespace is absent from the terminal execution capability.","source_ref":"viper-docs"}
+{"id":"docs-v2-005","category":"documentation","text":"A context digest identifies supplied evidence but does not prove human approval.","source_ref":"viper-docs"}
+{"id":"docs-v2-006","category":"documentation","text":"The manifest records corpus version, creation date, file names, and sample counts.","source_ref":"viper-docs"}
+{"id":"docs-v2-007","category":"documentation","text":"Corpus releases are immutable; new samples belong in a new version directory.","source_ref":"viper-docs"}
+{"id":"docs-v2-008","category":"documentation","text":"The deployment guide keeps the API bound to loopback until remote authentication exists.","source_ref":"viper-docs"}
+{"id":"docs-v2-009","category":"documentation","text":"Systemd credentials are delivered through a file descriptor instead of environment variables.","source_ref":"viper-docs"}
+{"id":"docs-v2-010","category":"documentation","text":"The threat model treats planner-provided context as untrusted evidence.","source_ref":"viper-docs"}
+{"id":"docs-v2-011","category":"documentation","text":"A semantic assessment reports the model and reference corpus digests it used.","source_ref":"viper-docs"}
+{"id":"docs-v2-012","category":"documentation","text":"Missing required semantic evidence must not be replaced by a default score.","source_ref":"viper-docs"}
+{"id":"docs-v2-013","category":"documentation","text":"The public key bundle is integrity-sensitive even though its contents are public.","source_ref":"viper-docs"}
+{"id":"docs-v2-014","category":"documentation","text":"The audit ledger hashes redacted event details before durable storage.","source_ref":"viper-docs"}
+{"id":"docs-v2-015","category":"documentation","text":"A timeout is a failed decision dependency and therefore fails closed.","source_ref":"viper-docs"}
+{"id":"docs-v2-016","category":"documentation","text":"Human approval is bound to the exact normalized proposal being executed.","source_ref":"viper-docs"}
+{"id":"docs-v2-017","category":"documentation","text":"The Rust Book introduces ownership as a compile-time memory-management discipline.","source_ref":"rust-book"}
+{"id":"docs-v2-018","category":"documentation","text":"Rust editions organize language changes while allowing crates from different editions to interoperate.","source_ref":"rust-book"}
+{"id":"docs-v2-019","category":"documentation","text":"A trait describes behavior that types can implement and generic code can require.","source_ref":"rust-book"}
+{"id":"docs-v2-020","category":"documentation","text":"Lifetimes describe how long references remain valid; they do not extend the referenced value.","source_ref":"rust-book"}
+{"id":"docs-v2-021","category":"documentation","text":"Option represents a value that may be absent without using a null pointer convention.","source_ref":"rust-book"}
+{"id":"docs-v2-022","category":"documentation","text":"The standard library provides filesystem, collections, synchronization, and I/O APIs.","source_ref":"rust-std"}
+{"id":"docs-v2-023","category":"documentation","text":"Mutex provides mutual exclusion for access to data shared between threads.","source_ref":"rust-std"}
+{"id":"docs-v2-024","category":"documentation","text":"Path represents filesystem paths using platform-aware path components.","source_ref":"rust-std"}
+{"id":"docs-v2-025","category":"documentation","text":"Command configures a child process and can collect its exit status and output.","source_ref":"rust-std"}

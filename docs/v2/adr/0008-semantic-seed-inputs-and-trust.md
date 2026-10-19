@@ -53,6 +53,14 @@ defects and its license requires a separate commercial grant.
    Corpus files are reviewed and checked into Git; the loader has no network
    client and never downloads data. New data means a new immutable version
    directory, not mutation of an existing release.
+10. Keep labeled evaluation data outside the trusted reference corpus. The
+    initial `evaluation/semantic-v1/` benchmark is synthetic and has four
+    balanced labels (in-distribution, out-of-domain, prompt injection, factual
+    error), written ground truth, and development/holdout splits. It is a pilot
+    only. Proposed numeric LID cutoffs are hypotheses, not accepted policy;
+    do not encode thresholds until a larger, independently reviewed evaluation
+    demonstrates stable class separation with the pinned model, corpus, and
+    neighbor count. LID alone must never approve an action.
 
 ## Input contract
 
@@ -132,10 +140,13 @@ suite passes.
 - Candle inference is optional so default builds and policy-backed provider
   behavior do not acquire ML runtime dependencies. The model candidate is not
   yet enabled by default and no model files are committed to the repository.
-- `corpus/v1` currently contains 16 synthetic, non-personal examples across
-  code, documentation, email and general prose. These are plumbing fixtures,
-  not a calibrated or production trust corpus; corpus quality and thresholds
-  require separate evaluation before semantic decisions are enabled.
+- `corpus/v1` remains the 16-sample synthetic plumbing fixture. `corpus/v2`
+  contains 100 provenance-tracked samples across four categories, including
+  project-owned material and paraphrases of public Rust documentation. It is
+  still too small to establish production thresholds.
+- `evaluation/semantic-v1` contains 64 synthetic labeled cases, balanced across
+  four classes and split into development/holdout. It is not calibration proof;
+  expand and review it before evaluator policy is enabled.
 - Existing IPC v2 clients remain compatible, but cannot use semantic mode.
 - A real-provider, distinct-UID end-to-end test remains required before the
   slice is considered complete.

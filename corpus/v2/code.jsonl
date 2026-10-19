@@ -1,0 +1,25 @@
+{"id":"code-v2-001","category":"code","text":"The decision gate records a proposal before returning its verdict.","source_ref":"viper-code"}
+{"id":"code-v2-002","category":"code","text":"A committed receipt represents a database transaction that has completed.","source_ref":"viper-code"}
+{"id":"code-v2-003","category":"code","text":"Tool proposals are normalized before policy evaluation.","source_ref":"viper-code"}
+{"id":"code-v2-004","category":"code","text":"The trajectory chain links each event to the previous event digest.","source_ref":"viper-code"}
+{"id":"code-v2-005","category":"code","text":"The IPC client rejects a response whose nonce does not match the request.","source_ref":"viper-code"}
+{"id":"code-v2-006","category":"code","text":"A provider signature covers the canonical request digest and both nonces.","source_ref":"viper-code"}
+{"id":"code-v2-007","category":"code","text":"A policy rule has a stable identifier and an explicit action.","source_ref":"viper-code"}
+{"id":"code-v2-008","category":"code","text":"Unknown policy fields cause configuration loading to fail.","source_ref":"viper-code"}
+{"id":"code-v2-009","category":"code","text":"The SQLite writer serializes event batches through one connection.","source_ref":"viper-code"}
+{"id":"code-v2-010","category":"code","text":"A failed SEED connection produces a durable veto.","source_ref":"viper-code"}
+{"id":"code-v2-011","category":"code","text":"The command parser applies a maximum request size before deserialization.","source_ref":"viper-code"}
+{"id":"code-v2-012","category":"code","text":"An event hash is calculated from canonical event fields and its parent hash.","source_ref":"viper-code"}
+{"id":"code-v2-013","category":"code","text":"The provider loads its signing credential from an inherited file descriptor.","source_ref":"viper-code"}
+{"id":"code-v2-014","category":"code","text":"Socket peer credentials are checked against the configured service UID.","source_ref":"viper-code"}
+{"id":"code-v2-015","category":"code","text":"The keyring rejects duplicate key identifiers.","source_ref":"viper-code"}
+{"id":"code-v2-016","category":"code","text":"An expired retiring public key cannot verify a new response.","source_ref":"viper-code"}
+{"id":"code-v2-017","category":"code","text":"A malformed digest is rejected before it reaches the verifier.","source_ref":"viper-code"}
+{"id":"code-v2-018","category":"code","text":"The workspace uses Rust 2024 edition and a shared lint configuration.","source_ref":"viper-code"}
+{"id":"code-v2-019","category":"code","text":"The parser returns a typed error when a required field is absent.","source_ref":"viper-code"}
+{"id":"code-v2-020","category":"code","text":"A unit test uses a temporary directory for filesystem fixtures.","source_ref":"viper-code"}
+{"id":"code-v2-021","category":"code","text":"A borrowed string slice does not require allocating a new String.","source_ref":"rust-book"}
+{"id":"code-v2-022","category":"code","text":"The Result enum represents either a successful value or an error.","source_ref":"rust-book"}
+{"id":"code-v2-023","category":"code","text":"A match expression must handle every possible enum variant.","source_ref":"rust-book"}
+{"id":"code-v2-024","category":"code","text":"An iterator adapter can transform items before they are collected.","source_ref":"rust-book"}
+{"id":"code-v2-025","category":"code","text":"An immutable reference permits reading a value without taking ownership.","source_ref":"rust-book"}
