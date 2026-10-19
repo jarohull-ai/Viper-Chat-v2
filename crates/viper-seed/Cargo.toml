@@ -9,6 +9,10 @@ license.workspace = true
 name = "viper-seed-provider"
 path = "src/viper-seed-provider.rs"
 
+[[bin]]
+name = "viper-seed-keygen"
+path = "src/viper-seed-keygen.rs"
+
 [dependencies]
 clap.workspace = true
 ed25519-dalek.workspace = true

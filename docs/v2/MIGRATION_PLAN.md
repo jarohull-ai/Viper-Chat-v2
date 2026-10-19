@@ -51,8 +51,13 @@ Exit: all acceptance evidence above passes, and Phase 1 code is committed.
 - `viper-seed-provider` now serves SEED IPC v2 as a separate process, loads the Ed25519 key from
   an inherited descriptor, checks peer UID, and independently re-evaluates Tool Guard evidence.
   Its current deterministic policy-backed gate is not an independent semantic decider; no tool
-  execution exists. A first-run credential provisioner, systemd hardening, and process-level
-  integration test across `viper-server` + provider + `viper-db` remain required.
+  execution exists. The first-run `viper-seed-keygen` provisioner writes a
+  provider-owned private credential and root-owned public keyring without
+  overwriting existing paths. Systemd hardening, automated key rotation, and a
+  process-level integration test across `viper-server` + provider + `viper-db`
+  remain required. The next deployment task is a least-privilege systemd unit
+  with credential-descriptor handoff; after that, add the root-only full process
+  integration test (or run it on a dedicated privileged runner).
 - The server API must reject unknown request fields, enforce the 64 KiB body limit, use stable
   machine-readable errors, and expose no tool-execution capability in this phase.
 - Add `viper-sandbox`, Bubblewrap environment construction, process groups, timeouts, output limits,

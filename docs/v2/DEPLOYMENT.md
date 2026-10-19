@@ -9,9 +9,51 @@ Build and inspect its CLI:
 ```sh
 cargo build -p viper-server --bin viper-server
 cargo build -p viper-seed --bin viper-seed-provider
+cargo build -p viper-seed --bin viper-seed-keygen
 cargo run -p viper-server -- --help
 cargo run -p viper-seed --bin viper-seed-provider -- --help
+cargo run -p viper-seed --bin viper-seed-keygen -- --help
 ```
+
+## First-run credential provisioning
+
+Create the output directories first; they must already exist, be root-owned,
+and not be writable by group or other users. Run the provisioner as root with
+the dedicated non-root provider UID. It refuses existing destinations, never
+prints private material, and publishes files without replacing existing paths:
+
+```sh
+install -d -o root -g root -m 0755 /etc/viper-seed
+install -d -o root -g root -m 0755 /etc/viper
+install -d -o root -g 991 -m 0750 /var/lib/viper-seed/credentials
+viper-seed-keygen \
+  --key-id provider-2026-10 \
+  --provider-uid 991 \
+  --provider-gid 991 \
+  --private-output /var/lib/viper-seed/credentials/signing-key \
+  --public-output /etc/viper/seed-provider-keys.json
+```
+
+The private file is mode `0400`, owned by the provider UID/GID; its parent is
+root-owned and group-traversable by the provider. The public keyring is mode
+`0644`, root-owned. Both are generated from one OS-random Ed25519 seed
+and synced before publication. This command is first-run-only: it never
+overwrites, rotates, or deletes existing credentials. For now, an operator
+supplies the private file to the provider on inherited FD 3
+(`3</var/lib/viper-seed/credentials/signing-key`); do not copy it into argv,
+an environment variable, or a server-owned location. Automated rotation and a
+systemd credentials handoff are separate follow-up work.
+
+## Privileged test scope
+
+The unit tests for key format/keypair agreement run in ordinary CI and need no
+privileges. They do not execute the provisioner against the host filesystem or
+verify installed UID/GID/modes. Running `viper-seed-keygen` itself requires
+root. A future filesystem-provisioning integration test and the full
+`viper-server` + provider + SQLite process test require root plus distinct
+service UIDs; run them locally in an isolated environment or on a dedicated
+privileged runner. Standard CI currently covers the separate cross-UID IPC
+tests, but does not claim to run those provisioning or full process tests.
 
 Required startup inputs:
 
