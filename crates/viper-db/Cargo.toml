@@ -1,0 +1,23 @@
+[package]
+name = "viper-db"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+viper-trajectory = { path = "../viper-trajectory" }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "ledger_write"
+harness = false

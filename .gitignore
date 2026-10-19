@@ -1,0 +1,10 @@
+/target/
+**/target/
+/target-cross-uid/
+.env
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.log
+.DS_Store

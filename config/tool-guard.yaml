@@ -1,0 +1,183 @@
+# Polityka bezpieczeństwa terminala (tool_guard)
+#
+# Reguły sprawdzane są przed każdym uruchomieniem terminal_run.
+# Kolejność ma znaczenie: pierwsza pasująca reguła wygrywa (first match wins).
+#
+#   pattern            wyrażenie regularne (RegExp), sprawdzane na komendzie
+#   severity           MEDIUM | HIGH | CRITICAL
+#   category           command_injection | privilege_escalation | resource_abuse
+#                      | code_execution | network_abuse | sensitive_file_access
+#                      | obfuscation | destructive
+#   message            tekst pokazywany użytkownikowi w karcie zatwierdzenia
+#   exclude_patterns   wzorce, które wyłączają dopasowanie (np. echo w komentarzu)
+#
+# Działanie:
+#   block  – odmowa bez pytania (severity CRITICAL)
+#   warn   – ostrzeżenie w karcie zatwierdzenia, użytkownik może mimo to kliknąć
+#   ask    – normalne pytanie o zatwierdzenie (domyślne zachowanie)
+#
+# Poziom czułości zmienia się w ⚙ Settings (strict | balanced | off).
+
+schema_version: viper.tool_guard.v1
+
+defaults:
+  sensitive_file_access: block
+  privilege_escalation: block
+  destructive: block
+  obfuscation: block
+  code_execution: warn
+  network_abuse: warn
+  command_injection: warn
+  resource_abuse: warn
+
+rules:
+  # --- pliki wrażliwe ---------------------------------------------------
+  - pattern: '(?:^|[\s=;|&])cat\s+[^\n]*\.(?:env|pem|p12|pfx|key)(?:\s|$)'
+    severity: CRITICAL
+    category: sensitive_file_access
+    message: 'Odczyt pliku z sekretami (.env, .key, .pem) został zablokowany.'
+  - pattern: '(?:^|[\s=;|&])(?:cat|less|more|head|tail|cp|scp|rsync|mv)\s+[^\n]*\.env(?:\s|$)'
+    severity: CRITICAL
+    category: sensitive_file_access
+    message: 'Dostęp do pliku .env został zablokowany — zawiera klucze API.'
+  - pattern: '(?:^|[\s=;|&])(?:cat|less|more|head|tail|less)\s+[^\n]*(?:id_rsa|id_ed25519|\.ssh/|authorized_keys)(?:\s|$)'
+    severity: CRITICAL
+    category: sensitive_file_access
+    message: 'Dostęp do kluczy SSH został zablokowany.'
+  - pattern: '(?:^|[\s=;|&])(?:cat|less|more|head|tail)\s+[^\n]*\.aws/credentials(?:\s|$)'
+    severity: CRITICAL
+    category: sensitive_file_access
+    message: 'Dostęp do poświadczeń AWS został zablokowany.'
+  - pattern: '(?:^|[\s=;|&])(?:cat|less|more|head|tail|vi|nano)\s+/etc/(?:shadow|passwd|sudoers)(?:\s|$)'
+    severity: CRITICAL
+    category: sensitive_file_access
+    message: 'Odczyt plików systemowych /etc został zablokowany.'
+  # Pliki konfiguracyjne, które w praktyce zawierają klucze API.
+  - pattern: '(?:^|[\s=;|&])(?:cat|less|more|head|tail|vi|nano|grep|awk|sed|strings|cp|mv|tar|zip)\s+[^\n]*[\w.-]*config\.toml'
+    severity: CRITICAL
+    category: sensitive_file_access
+    message: 'Odczyt pliku konfiguracyjnego z kluczami API (*config.toml) został zablokowany.'
+  - pattern: '(?:^|[\s=;&|])(?:cat|less|more|head|tail|vi|nano|grep|strings)\s+[^\n]*(?:\.netrc|_netrc|\.npmrc|\.pypirc|\.pgpass)(?:\s|$)'
+    severity: CRITICAL
+    category: sensitive_file_access
+    message: 'Odczyt pliku z poświadczeniami menedżera pakietów został zablokowany.'
+  - pattern: '(?:^|[\s=;&|])(?:cat|less|more|head|tail|vi|nano|grep|strings)\s+[^\n]*(?:credentials\.json|credentials\.toml|secrets\.(?:json|ya?ml)|\.kube/config)(?:\s|$)'
+    severity: CRITICAL
+    category: sensitive_file_access
+    message: 'Odczyt pliku z poświadczeniami (credentials/secrets/kubeconfig) został zablokowany.'
+  - pattern: '(?:^|[\s=;&|])(?:cat|less|more|head|tail|vi|nano|grep|strings)\s+[^\n]*\.docker/config\.json(?:\s|$)'
+    severity: CRITICAL
+    category: sensitive_file_access
+    message: 'Odczyt konfiguracji Dockera (może zawierać token rejestru) został zablokowany.'
+  # Wyciąganie kluczy ze zmiennych środowiskowych procesu.
+  - pattern: '(?:^|[\s;&|])(?:printenv|env|export\s+-p|set)(?:\s|$)'
+    severity: CRITICAL
+    category: sensitive_file_access
+    message: 'Wypisanie zmiennych środowiskowych zostało zablokowane — mogą zawierać klucze API.'
+  # Baza rozmów leży w workspace i trzyma klucze API w tabeli settings.
+  - pattern: '(?:^|[\s=;&|])(?:cat|less|more|head|tail|strings|xxd|od|hexdump|sqlite3|cp|mv|tar|zip|base64)\s+[^\n]*\.(?:db|sqlite3?|db3)(?:\s|$)'
+    severity: CRITICAL
+    category: sensitive_file_access
+    message: 'Odczyt pliku bazy danych został zablokowany — zawiera historię rozmów i klucze API.'
+
+  # --- eskalacja uprawnień ---------------------------------------------
+  - pattern: '(?:^|[\s;&|(])(?:sudo|doas|pkexec)(?:\s|$)'
+    severity: CRITICAL
+    category: privilege_escalation
+    message: 'Podnoszenie uprawnień (sudo/doas/pkexec) jest zablokowane.'
+  - pattern: '(?:^|[\s;&|(])su\s+-\s*root(?:\s|$)'
+    severity: CRITICAL
+    category: privilege_escalation
+    message: 'Przełączenie na konto root jest zablokowane.'
+  - pattern: 'chmod\s+(?:-R\s+)?(?:777|a\+rwx)\s+(?:/|/\*|~|~/\s*$)'
+    severity: CRITICAL
+    category: privilege_escalation
+    message: 'Reczeczne rozszerzanie uprawnień na katalog domowy lub systemowy jest zablokowane.'
+
+  # --- komendy destrukcyjne --------------------------------------------
+  # Sandbox chroni hosta, ale workspace jest zapisywalny: usunięcie "." lub
+  # "*" nadal niszczy cały projekt użytkownika. Flagi mogą być łączone albo
+  # rozdzielone (rm -rf, rm -r -f, rm -fr).
+  - pattern: '\brm\s+(?:-[a-zA-Z]+\s+)+(?:\.|\./|\*)(?:\s|$)'
+    severity: CRITICAL
+    category: destructive
+    message: 'Rekurencyjne kasowanie całego aktywnego projektu zostało zablokowane.'
+  - pattern: 'rm\s+(?:-[a-zA-Z]*\s+)*-[a-zA-Z]*[rf][a-zA-Z]*\s+(?:/|/\*|~|\$HOME)(?:\s|$)'
+    severity: CRITICAL
+    category: destructive
+    message: 'Kasowanie katalogu głównego lub całego systemu jest zablokowane.'
+  - pattern: '\brm\s+-rf?\s+/\s*(?:--no-preserve-root)?\s*$'
+    severity: CRITICAL
+    category: destructive
+    message: 'Kasowanie katalogu / jest zablokowane.'
+  - pattern: '>\s*/dev/[sh]d[a-z]\b'
+    severity: CRITICAL
+    category: destructive
+    message: 'Zapis bezpośrednio na dysk systemowy jest zablokowany.'
+  - pattern: '\bmkfs(?:\.\w+)?\b|\bdd\s+[^\n]*of=/dev/'
+    severity: CRITICAL
+    category: destructive
+    message: 'Formatowanie lub nadpisywanie urządzenia jest zablokowane.'
+
+  # --- wykorzystanie zasobów / destabilizacja --------------------------
+  - pattern: ':\(\)\s*\{\s*:\|\:&\s*\}\s*;\s*:'
+    severity: CRITICAL
+    category: resource_abuse
+    message: 'Fork bomb został zablokowany.'
+  - pattern: '(?:^|[\s;&|])(?:shutdown|reboot|halt|poweroff|init\s+0)(?:\s|$)'
+    severity: CRITICAL
+    category: resource_abuse
+    message: 'Wyłączenie lub restart hosta jest zablokowany.'
+  - pattern: '(?:^|[\s;&|])(?:pkill|killall)\s+(?:-9\s+)?-'
+    severity: HIGH
+    category: resource_abuse
+    message: 'Masowe ubijanie procesów może zatrzymać system.'
+
+  # #+komentarz: przykład czujności, reguła poniżej łapie wykonanie a nie komentarz
+  - pattern: 'systemctl\s+(?:restart|stop|disable)\s+(?:postgresql|mysql|docker|nginx|apache2)'
+    severity: HIGH
+    category: resource_abuse
+    message: 'Zatrzymanie usługi systemowej może przerwać pracę innych programów.'
+    exclude_patterns:
+      - '^#'
+
+  # --- komendy sieciowe bez limitu czasu -------------------------------
+  # Bez --max-time wisząca strona trzyma zatwierdzenie i sandbox do 60 s.
+  - pattern: '(?:^|[\s;&|])(?:curl|wget)(?![^\n;&|]*--max-time)(?![^\n;&|]*--connect-timeout)[^\n]*https?://'
+    severity: HIGH
+    category: network_abuse
+    message: 'Komenda sieciowa bez limitu czasu — dodaj --max-time, np. --max-time 20.'
+
+  # --- sieć prywatna i usługi lokalne ----------------------------------
+  - pattern: 'https?://(?:localhost|127\.0\.0\.\d+|0\.0\.0\.0|\[::1\]|169\.254\.169\.254|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+)'
+    severity: HIGH
+    category: network_abuse
+    message: 'Odpytywanie usług lokalnych lub sieci prywatnej (w tym metadanych chmury) jest ryzykowne.'
+
+  # --- wykonywanie pobranego kodu ---------------------------------------
+  - pattern: '(?:curl|wget)\s+[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|k)?sh\b'
+    severity: CRITICAL
+    category: code_execution
+    message: 'Uruchamianie kodu pobranego z sieci potrafi być niebezpieczne — sprawdź źródło.'
+  - pattern: '(?:curl|wget)\s+[^\n|]*\|\s*(?:sudo\s+)?(?:python[23]?|perl|ruby|node)\b'
+    severity: CRITICAL
+    category: code_execution
+    message: 'Uruchamianie pobranego kodu w interpreterze jest ryzykowne.'
+  - pattern: 'base64\s+(?:-d|--decode)[^\n|]*\|\s*(?:ba|z)?sh\b'
+    severity: CRITICAL
+    category: obfuscation
+    message: 'Dekodowanie i uruchamianie zakodowanego polecenia zostało zablokowane.'
+  - pattern: '(?:/dev/tcp/|nc\s+-e\b|socat\s+EXEC:)'
+    severity: CRITICAL
+    category: network_abuse
+    message: 'Odwrócona powłoka (reverse shell) jest zablokowana.'
+  - pattern: '/dev/tcp/\d|curl\s+[^\n]*\$\(|\bnc\s+-l[ep]\b'
+    severity: HIGH
+    category: network_abuse
+    message: 'Połączenie sieciowe wychodzące z sandboxu nie zadziała — tu nie ma sieci.'
+
+  # ###komentarz: ukrywanie poleceń
+  - pattern: '\$IFS|\\x[0-9a-fA-F]{2}|\\033|\|\|\s*\$\('
+    severity: HIGH
+    category: obfuscation
+    message: 'Zakodowana komenda jest trudna do zweryfikowania przed uruchomieniem.'
