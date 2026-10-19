@@ -8,6 +8,10 @@ workspace is still deliberately incapable of executing tools. See
 [`docs/v2/`](docs/v2/) for the frozen product specification, architecture,
 migration plan, ADRs, and protocol contracts.
 
+The `viper-server` executable binds to IPv4 loopback and requires the SEED IPC
+socket plus an inherited credential descriptor. Startup options and current
+deployment limitations are in [`docs/v2/DEPLOYMENT.md`](docs/v2/DEPLOYMENT.md).
+
 ## Build and verify
 
 ```sh
